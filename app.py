@@ -515,8 +515,7 @@ def force_sidebar_expanded():
         expandSidebar();
         setTimeout(expandSidebar, 150);
         setTimeout(expandSidebar, 600);
-        const observer = new MutationObserver(expandSidebar);
-        observer.observe(window.parent.document.body, { childList: true, subtree: true, attributes: true });
+        setTimeout(expandSidebar, 1200);
         </script>
         """,
         height=0,
@@ -618,7 +617,12 @@ class PostgresConnection:
 def conn():
     if USE_POSTGRES:
         return PostgresConnection()
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA synchronous=NORMAL")
+    c.execute("PRAGMA temp_store=MEMORY")
+    c.execute("PRAGMA cache_size=-20000")
+    return c
 
 
 def q(sql, params=()):
@@ -824,12 +828,22 @@ def file_download_bytes(path_value: str | Path):
     return path.read_bytes()
 
 
+@st.cache_data(show_spinner=False)
+def cached_file_bytes(path_value: str) -> bytes | None:
+    path = Path(path_value)
+    if not path.exists() or not path.is_file():
+        return None
+    return path.read_bytes()
+
+
+@st.cache_data(show_spinner=False)
 def asset_data_uri(path: Path) -> str:
     mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-    data = base64.b64encode(path.read_bytes()).decode("ascii")
+    data = base64.b64encode(cached_file_bytes(str(path)) or b"").decode("ascii")
     return f"data:{mime};base64,{data}"
 
 
+@st.cache_data(show_spinner=False)
 def find_logo_asset(index: int) -> Optional[Path]:
     for ext in ("png", "jpg", "jpeg", "webp", "svg"):
         candidate = ASSETS_DIR / f"logo_{index}.{ext}"
@@ -1328,10 +1342,38 @@ def ensure_postgres_schema():
         c.commit()
 
 
+def ensure_db_indexes():
+    sqlite_indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_usuarios_login ON usuarios(usuario, email, ativo)",
+        "CREATE INDEX IF NOT EXISTS idx_entidades_status_ativo ON entidades(status_qualificacao, ativo)",
+        "CREATE INDEX IF NOT EXISTS idx_entidades_nivel_ativo ON entidades(nivel, ativo)",
+        "CREATE INDEX IF NOT EXISTS idx_entidades_cadastrado_por ON entidades(cadastrado_por, cadastrado_por_email)",
+        "CREATE INDEX IF NOT EXISTS idx_protocolos_status ON protocolos(status)",
+        "CREATE INDEX IF NOT EXISTS idx_protocolos_entidade ON protocolos(entidade_id)",
+        "CREATE INDEX IF NOT EXISTS idx_protocolos_curso_status ON protocolos(curso_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_historico_protocolo ON historico_fluxo(protocolo, id)",
+        "CREATE INDEX IF NOT EXISTS idx_respostas_entidade ON respostas_entidade(entidade_id, id)",
+        "CREATE INDEX IF NOT EXISTS idx_respostas_bpf ON respostas_bpf(entidade_id, id)",
+        "CREATE INDEX IF NOT EXISTS idx_respostas_curso ON respostas_curso(protocolo, id)",
+        "CREATE INDEX IF NOT EXISTS idx_cursos_area_nivel ON cursos(area, nivel, ativo)",
+        "CREATE INDEX IF NOT EXISTS idx_perguntas_qualificacao ON perguntas_qualificacao(ativo, questionario, ordem)",
+        "CREATE INDEX IF NOT EXISTS idx_perguntas_bpf ON perguntas_bpf(ativo, secao, subsecao, ordem)",
+        "CREATE INDEX IF NOT EXISTS idx_perguntas_curso ON perguntas_curso(curso_id, ativo, ordem)",
+        "CREATE INDEX IF NOT EXISTS idx_alternativas_curso ON alternativas_curso(pergunta_id, ativo, ordem)",
+        "CREATE INDEX IF NOT EXISTS idx_owners_area_etapa ON owners_area(area, etapa, ativo)",
+    ]
+    with conn() as c:
+        cur = c.cursor()
+        for sql in sqlite_indexes:
+            cur.execute(sql)
+        c.commit()
+
+
 def init_db():
     ensure_os_storage()
     if USE_POSTGRES:
         ensure_postgres_schema()
+        ensure_db_indexes()
         ensure_protocolos_os_modelo()
         if scalar("SELECT COUNT(*) FROM usuarios", default=0) == 0:
             exec_many(
@@ -1666,6 +1708,7 @@ def init_db():
                 ]
             cur.executemany("INSERT INTO owners_area(area,etapa,nome,email,usuario) VALUES(?,?,?,?,?)", owners)
         c.commit()
+    ensure_db_indexes()
 
 
 def nivel_por_pontos(p: int) -> str:
