@@ -68,7 +68,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
         setMode("password");
         return;
       }
-      localStorage.setItem("bahia_user", JSON.stringify(result.user));
+      saveStoredUser(result.user);
       onLogin(result.user);
     } catch (err: any) {
       setError(err.message);
@@ -98,7 +98,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
     }
     try {
       const result = await api.changePassword(pendingUser.id, novaSenha);
-      localStorage.setItem("bahia_user", JSON.stringify(result.user));
+      saveStoredUser(result.user);
       onLogin(result.user);
     } catch (err: any) {
       setError(err.message);
@@ -828,13 +828,28 @@ function Metric({ title, value }: { title: string; value: any }) {
 function Loading() { return <div className="empty">Carregando...</div>; }
 function ErrorMessage({ text }: { text: string }) { return <div className="alert error">{text}</div>; }
 
+function hasBrowserStorage() {
+  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function saveStoredUser(user: User) {
+  if (!hasBrowserStorage()) return;
+  window.localStorage.setItem("bahia_user", JSON.stringify(user));
+}
+
+function clearStoredUser() {
+  if (!hasBrowserStorage()) return;
+  window.localStorage.removeItem("bahia_user");
+}
+
 function getStoredUser() {
-  const raw = localStorage.getItem("bahia_user");
+  if (!hasBrowserStorage()) return null;
+  const raw = window.localStorage.getItem("bahia_user");
   if (!raw) return null;
   try {
     return JSON.parse(raw) as User;
   } catch {
-    localStorage.removeItem("bahia_user");
+    window.localStorage.removeItem("bahia_user");
     return null;
   }
 }
@@ -846,7 +861,7 @@ export default function App() {
   if (!user) return <Login onLogin={setUser} />;
 
   function logout() {
-    localStorage.removeItem("bahia_user");
+    clearStoredUser();
     setUser(null);
   }
 
