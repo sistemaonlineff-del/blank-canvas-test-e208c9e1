@@ -810,6 +810,10 @@ function ConfigPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const pendingPasswordUsers =
+    table === "usuarios"
+      ? rows.filter((row) => !row.id && String(row.email || row.usuario || row.nome || "").trim() && !row.senha_hash)
+      : [];
 
   useEffect(() => {
     setErrorMessage("");
@@ -820,6 +824,10 @@ function ConfigPage() {
 
   async function save() {
     setErrorMessage("");
+    if (table === "usuarios" && pendingPasswordUsers.length) {
+      setErrorMessage("Gere a senha temporaria dos novos usuarios antes de salvar a tabela.");
+      return;
+    }
     try {
       await api.saveTable(table, rows);
       setMessage("Tabela salva.");
@@ -833,6 +841,9 @@ function ConfigPage() {
       <Tabs value={table} onChange={setTable as any} items={Object.entries(tableLabels)} />
       {message && <div className="alert success">{message}</div>}
       {errorMessage && <div className="alert error">{errorMessage}</div>}
+      {table === "usuarios" && !!pendingPasswordUsers.length && (
+        <div className="alert warning">Antes de salvar, clique em `Gerar senha` para cada novo usuario adicionado.</div>
+      )}
       {table === "usuarios" ? <UsersManagementTable rows={rows} onChange={setRows} /> : <EditableTable rows={rows} onChange={setRows} />}
       <button onClick={save}>Salvar tabela</button>
     </PageBlock>

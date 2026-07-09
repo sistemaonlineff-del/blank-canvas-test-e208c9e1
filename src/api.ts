@@ -799,8 +799,18 @@ const supabaseApi = {
 
   async saveTable(table: string, rows: Row[]) {
     const db = ensureSupabase();
-    for (const row of rows) {
-      const clean = normalizeTableRow(table, { ...row });
+    const normalizedRows = rows.map((row) => normalizeTableRow(table, { ...row }));
+    if (table === "usuarios") {
+      const { data: existingRows, error: existingError } = await db.from(table).select("id");
+      throwDb(existingError);
+      const incomingIds = new Set(normalizedRows.filter((row) => row.id).map((row) => row.id));
+      const removedIds = (existingRows || []).map((row: Row) => row.id).filter((id: number) => !incomingIds.has(id));
+      if (removedIds.length) {
+        const { error: deleteError } = await db.from(table).delete().in("id", removedIds);
+        throwDb(deleteError);
+      }
+    }
+    for (const clean of normalizedRows) {
       delete clean._deleted;
       if (clean.id) {
         const id = clean.id;
