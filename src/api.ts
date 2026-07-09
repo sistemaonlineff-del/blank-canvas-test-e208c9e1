@@ -1,5 +1,4 @@
 import { createClient } from "@supabase/supabase-js";
-import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from "docx";
 
 export type User = {
   id: number;
@@ -113,6 +112,15 @@ function safeText(value: unknown) {
   return String(value ?? "-").trim() || "-";
 }
 
+function escapeHtml(value: unknown) {
+  return safeText(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -124,66 +132,59 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-function docParagraph(label: string, value: unknown) {
-  return new Paragraph({
-    spacing: { after: 120 },
-    children: [
-      new TextRun({ text: `${label}: `, bold: true }),
-      new TextRun({ text: safeText(value) })
-    ]
-  });
-}
-
-function docTable(rows: Array<[string, unknown, string, unknown]>) {
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: rows.map(
-      ([labelA, valueA, labelB, valueB]) =>
-        new TableRow({
-          children: [
-            new TableCell({ children: [docParagraph(labelA, valueA)] }),
-            new TableCell({ children: [docParagraph(labelB, valueB)] })
-          ]
-        })
-    )
-  });
-}
-
 async function buildProtocolOsDocument(protocol: Row) {
-  const doc = new Document({
-    sections: [
-      {
-        children: [
-          new Paragraph({
-            spacing: { after: 240 },
-            children: [new TextRun({ text: "ORDEM DE SERVICO", bold: true, size: 30 })]
-          }),
-          new Paragraph({
-            spacing: { after: 240 },
-            children: [new TextRun({ text: "Governanca e Qualificacao de Demandas - Bahia", bold: true })]
-          }),
-          docTable([
-            ["Protocolo", protocol.protocolo, "Status", protocol.status],
-            ["Entidade", protocol.entidade, "Curso", protocol.curso],
-            ["Area", protocol.area, "Nivel da entidade", protocol.nivel_entidade],
-            ["Solicitante", protocol.solicitante_nome, "E-mail", protocol.solicitante_email],
-            ["Data de abertura", protocol.data_abertura, "Data agendada", protocol.data_agendada],
-            ["Responsavel atual", protocol.responsavel_atual, "Etapa atual", protocol.etapa_atual]
-          ]),
-          new Paragraph({ spacing: { before: 240, after: 120 }, children: [new TextRun({ text: "DADOS DA ENTIDADE", bold: true })] }),
-          docTable([
-            ["CNPJ", protocol.cnpj, "Municipio", protocol.municipio_entidade],
-            ["Territorio", protocol.territorio_identidade, "Endereco", protocol.endereco],
-            ["Telefone", protocol.telefone, "Email responsavel", protocol.email_responsavel]
-          ]),
-          new Paragraph({ spacing: { before: 240, after: 120 }, children: [new TextRun({ text: "OBSERVACOES", bold: true })] }),
-          new Paragraph(safeText(protocol.observacao))
-        ]
-      }
-    ]
-  });
+  const rows: Array<[string, unknown, string, unknown]> = [
+    ["Protocolo", protocol.protocolo, "Status", protocol.status],
+    ["Entidade", protocol.entidade, "Curso", protocol.curso],
+    ["Area", protocol.area, "Nivel da entidade", protocol.nivel_entidade],
+    ["Solicitante", protocol.solicitante_nome, "E-mail", protocol.solicitante_email],
+    ["Data de abertura", protocol.data_abertura, "Data agendada", protocol.data_agendada],
+    ["Responsavel atual", protocol.responsavel_atual, "Etapa atual", protocol.etapa_atual]
+  ];
+  const entidadeRows: Array<[string, unknown, string, unknown]> = [
+    ["CNPJ", protocol.cnpj, "Municipio", protocol.municipio_entidade],
+    ["Territorio", protocol.territorio_identidade, "Endereco", protocol.endereco],
+    ["Telefone", protocol.telefone, "Email responsavel", protocol.email_responsavel]
+  ];
+  const renderTable = (tableRows: Array<[string, unknown, string, unknown]>) =>
+    tableRows
+      .map(
+        ([labelA, valueA, labelB, valueB]) => `
+          <tr>
+            <td><strong>${escapeHtml(labelA)}:</strong> ${escapeHtml(valueA)}</td>
+            <td><strong>${escapeHtml(labelB)}:</strong> ${escapeHtml(valueB)}</td>
+          </tr>
+        `
+      )
+      .join("");
 
-  return Packer.toBlob(doc);
+  const html = `
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>OS ${escapeHtml(protocol.protocolo)}</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #111827; margin: 32px; }
+          h1 { font-size: 24px; margin: 0 0 8px; }
+          h2 { font-size: 16px; margin: 24px 0 12px; }
+          p { margin: 0 0 12px; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+          td { border: 1px solid #cbd5e1; padding: 10px; vertical-align: top; width: 50%; }
+        </style>
+      </head>
+      <body>
+        <h1>ORDEM DE SERVICO</h1>
+        <p><strong>Governanca e Qualificacao de Demandas - Bahia</strong></p>
+        <table>${renderTable(rows)}</table>
+        <h2>DADOS DA ENTIDADE</h2>
+        <table>${renderTable(entidadeRows)}</table>
+        <h2>OBSERVACOES</h2>
+        <p>${escapeHtml(protocol.observacao)}</p>
+      </body>
+    </html>
+  `;
+
+  return new Blob(["\ufeff", html], { type: "application/msword" });
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -576,7 +577,7 @@ const supabaseApi = {
       nivel_entidade: data.entidades?.nivel
     };
     const blob = await buildProtocolOsDocument(protocol);
-    downloadBlob(blob, `${protocolo}_OS.docx`);
+    downloadBlob(blob, `${protocolo}_OS.doc`);
   },
 
   async table(table: string) {
