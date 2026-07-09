@@ -9,11 +9,11 @@ create table if not exists usuarios (
   email text,
   senha_hash text,
   perfil text,
-  senha_temporaria integer default 0,
-  trocar_senha_obrigatorio integer default 0,
-  acesso_pendente integer default 0,
+  senha_temporaria boolean default false,
+  trocar_senha_obrigatorio boolean default false,
+  acesso_pendente boolean default false,
   data_solicitacao text,
-  ativo integer default 1
+  ativo boolean default true
 );
 
 create table if not exists entidades (
@@ -51,7 +51,7 @@ create table if not exists entidades (
   data_cadastro text,
   cadastrado_por text,
   cadastrado_por_email text,
-  ativo integer default 1
+  ativo boolean default true
 );
 
 create table if not exists cursos (
@@ -63,7 +63,7 @@ create table if not exists cursos (
   carga_horaria text,
   owner_email text,
   estoque_total integer default 0,
-  ativo integer default 1
+  ativo boolean default true
 );
 
 create table if not exists perguntas_qualificacao (
@@ -78,7 +78,7 @@ create table if not exists perguntas_qualificacao (
   pontos_2 integer default 5,
   pontos_3 integer default 10,
   pontos_sim integer default 1,
-  ativo integer default 1
+  ativo boolean default true
 );
 
 create table if not exists perguntas_bpf (
@@ -91,7 +91,7 @@ create table if not exists perguntas_bpf (
   tipo_resposta text,
   opcoes text default 'S;N;P;NA',
   pontos_sim integer default 1,
-  ativo integer default 1
+  ativo boolean default true
 );
 
 create table if not exists perguntas_curso (
@@ -100,7 +100,7 @@ create table if not exists perguntas_curso (
   ordem integer,
   pergunta text,
   pontos_sim integer default 1,
-  ativo integer default 1
+  ativo boolean default true
 );
 
 create table if not exists alternativas_curso (
@@ -109,7 +109,7 @@ create table if not exists alternativas_curso (
   ordem integer,
   alternativa text,
   pontos integer default 0,
-  ativo integer default 1
+  ativo boolean default true
 );
 
 create table if not exists protocolos (
@@ -134,7 +134,7 @@ create table if not exists protocolos (
   os_preenchida_path text,
   os_preenchida_em text,
   os_preenchida_por text,
-  ativo integer default 1
+  ativo boolean default true
 );
 
 create table if not exists respostas_entidade (
@@ -175,7 +175,7 @@ create table if not exists owners_area (
   nome text,
   email text,
   usuario text,
-  ativo integer default 1
+  ativo boolean default true
 );
 
 create table if not exists historico_fluxo (
@@ -201,14 +201,15 @@ create table if not exists notificacoes (
 );
 
 insert into usuarios (nome, usuario, email, senha_hash, perfil, ativo, acesso_pendente)
-values ('Administrador', 'admin', '', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'Administrador', 1, 0)
+values ('Administrador', 'admin', '', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'Administrador', true, false)
 on conflict (usuario) do update
 set senha_hash = excluded.senha_hash,
     perfil = excluded.perfil,
-    ativo = 1,
-    acesso_pendente = 0;
+    ativo = true,
+    acesso_pendente = false;
 
 create index if not exists idx_usuarios_login on usuarios (usuario, email, ativo);
 create index if not exists idx_entidades_status_ativo on entidades (status_qualificacao, ativo);
 create index if not exists idx_protocolos_status on protocolos (status);
 create index if not exists idx_historico_protocolo on historico_fluxo (protocolo);
+

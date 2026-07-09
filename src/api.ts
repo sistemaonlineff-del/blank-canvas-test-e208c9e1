@@ -170,7 +170,7 @@ const supabaseApi = {
     if (existing) {
       const { error } = await db
         .from("usuarios")
-        .update({ senha_hash, senha_temporaria: 1, trocar_senha_obrigatorio: 1, acesso_pendente: 1, perfil: "Pendente", data_solicitacao })
+        .update({ senha_hash, senha_temporaria: true, trocar_senha_obrigatorio: true, acesso_pendente: true, perfil: "Pendente", data_solicitacao })
         .eq("id", existing.id);
       throwDb(error);
     } else {
@@ -180,11 +180,11 @@ const supabaseApi = {
         email: cleanEmail,
         senha_hash,
         perfil: "Pendente",
-        senha_temporaria: 1,
-        trocar_senha_obrigatorio: 1,
-        acesso_pendente: 1,
+        senha_temporaria: true,
+        trocar_senha_obrigatorio: true,
+        acesso_pendente: true,
         data_solicitacao,
-        ativo: 1
+        ativo: true
       });
       throwDb(error);
     }
@@ -206,7 +206,7 @@ const supabaseApi = {
     const senha_hash = await sha256(senha);
     const { error } = await db
       .from("usuarios")
-      .update({ senha_hash, senha_temporaria: 0, trocar_senha_obrigatorio: 0 })
+      .update({ senha_hash, senha_temporaria: false, trocar_senha_obrigatorio: false })
       .eq("id", userId);
     throwDb(error);
     const { data, error: lookupError } = await db.from("usuarios").select("*").eq("id", userId).single();
@@ -255,7 +255,7 @@ const supabaseApi = {
       data_cadastro: nowStr(),
       cadastrado_por: user.usuario,
       cadastrado_por_email: user.email || "",
-      ativo: 1
+      ativo: true
     }).select("id").single();
     throwDb(error);
     return { id: data?.id, message: "Entidade cadastrada." };
