@@ -5,3 +5,4 @@ openpyxl
 psycopg[binary]
 Flask
 flask-cors
+requests

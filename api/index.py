@@ -15,6 +15,7 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
+import requests
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 
@@ -418,12 +419,63 @@ def text_key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
-def get_owner(area: str, etapa: str) -> dict[str, Any]:
-    return fetch_one("SELECT * FROM owners_area WHERE area=? AND etapa=? AND ativo=1 LIMIT 1", (area, etapa)) or {
-        "nome": etapa,
-        "email": "",
-        "usuario": etapa,
+def stage_aliases(etapa: str = "", status: str = "") -> list[str]:
+    aliases = {
+        "validacao administrativa": [
+            "Validacao Administrativa",
+            "Validação Administrativa",
+            "Administrativo",
+            "Analista Administrativo",
+        ],
+        "analise tecnica": [
+            "Analise Tecnica",
+            "Análise Técnica",
+            "Tecnico",
+            "Técnico",
+            "Analista Tecnico",
+        ],
+        "agendamento": ["Agendamento"],
+        "execucao": ["Execucao", "Execução", "Executor"],
+        "finalizado": ["Finalizado"],
+        "cancelado": ["Cancelado"],
     }
+    values = [etapa, status]
+    values.extend(aliases.get(text_key(etapa or status), []))
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        clean = str(value or "").strip()
+        if clean and clean not in seen:
+            seen.add(clean)
+            ordered.append(clean)
+    return ordered
+
+
+def role_emails_for_stage(status: str = "", etapa: str = "") -> list[str]:
+    role_map = {
+        "validacao administrativa": ["Analista Administrativo"],
+        "analise tecnica": ["Analista Tecnico"],
+        "agendamento": ["Agendamento"],
+        "execucao": ["Execucao"],
+    }
+    roles = role_map.get(text_key(status or etapa), [])
+    if not roles:
+        return []
+    rows = fetch_all(
+        "SELECT email, usuario FROM usuarios WHERE ativo=1 AND COALESCE(acesso_pendente,0)=0 AND perfil IN ({})".format(
+            ",".join("?" for _ in roles)
+        ),
+        tuple(roles),
+    )
+    return [row.get("email") or row.get("usuario") for row in rows]
+
+
+def owner_emails_for_stage(area: str, etapa: str = "", status: str = "") -> list[str]:
+    if not area:
+        return []
+    keys = {text_key(value) for value in stage_aliases(etapa, status)}
+    rows = fetch_all("SELECT email, etapa FROM owners_area WHERE area=? AND ativo=1", (area,))
+    return [row.get("email") for row in rows if text_key(row.get("etapa")) in keys]
 
 
 def notification_recipients(area: str, etapa: str = "", solicitante_email: str = "", include_all_area: bool = False) -> list[str]:
@@ -433,7 +485,8 @@ def notification_recipients(area: str, etapa: str = "", solicitante_email: str =
     if include_all_area:
         recipients += [row.get("email") for row in fetch_all("SELECT email FROM owners_area WHERE area=? AND ativo=1", (area,))]
     elif etapa:
-        recipients.append(get_owner(area, etapa).get("email"))
+        owner_emails = owner_emails_for_stage(area, etapa, etapa)
+        recipients += owner_emails if owner_emails else role_emails_for_stage(etapa, etapa)
     recipients += [row.get("email") for row in fetch_all("SELECT email FROM usuarios WHERE ativo=1 AND perfil IN ('Administrador','Moderador')")]
     return sorted({str(email).strip() for email in recipients if str(email or "").strip()})
 
@@ -446,6 +499,33 @@ def register_notification(protocolo: str, destinatario: str, assunto: str, corpo
 
 
 def try_send_email(destinatario: str, assunto: str, corpo: str) -> tuple[bool, str]:
+    resend_key = os.getenv("RESEND_API_KEY", "").strip()
+    resend_from = (os.getenv("MAIL_FROM") or os.getenv("RESEND_FROM_EMAIL") or "").strip()
+    if resend_key and resend_from:
+        try:
+            response = requests.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {resend_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": resend_from,
+                    "to": [destinatario],
+                    "subject": assunto,
+                    "text": corpo,
+                },
+                timeout=20,
+            )
+            if response.ok:
+                return True, ""
+            try:
+                details = response.json()
+            except Exception:
+                details = response.text
+            return False, f"Resend: {details}"
+        except Exception as exc:
+            return False, f"Resend: {exc}"
     host = os.getenv("SMTP_HOST", "")
     user = os.getenv("SMTP_USER", "")
     password = os.getenv("SMTP_PASSWORD", "")
@@ -591,9 +671,9 @@ def register_user():
         execute(
             """UPDATE usuarios
                SET senha_hash=?, senha_temporaria=1, trocar_senha_obrigatorio=1,
-                   acesso_pendente=1, perfil='Pendente', data_solicitacao=?
+                   acesso_pendente=1, perfil=NULL, data_solicitacao=?, email=?, usuario=?, ativo=1
                WHERE id=?""",
-            (hash_pw(temp), data_solicitacao, existing["id"]),
+            (hash_pw(temp), data_solicitacao, email, email, existing["id"]),
         )
         user_id = existing["id"]
     else:
@@ -601,7 +681,7 @@ def register_user():
             """INSERT INTO usuarios(nome,usuario,email,senha_hash,perfil,senha_temporaria,
                       trocar_senha_obrigatorio,acesso_pendente,data_solicitacao,ativo)
                VALUES(?,?,?,?,?,?,?,?,?,1) RETURNING id""",
-            (email, email, email, hash_pw(temp), "Pendente", 1, 1, 1, data_solicitacao),
+            (email, email, email, hash_pw(temp), None, 1, 1, 1, data_solicitacao),
         )
     assunto = "Senha temporária - Sistema Bahia"
     corpo = f"Olá.\n\nCriamos um acesso temporário para o Sistema Bahia.\n\nE-mail: {email}\nSenha temporária: {temp}\n\nAo entrar, defina uma nova senha."
@@ -1029,6 +1109,110 @@ def save_table(table: str):
     real_table = EDITABLE_TABLES[table]
     data = request.get_json(force=True)
     rows = data.get("rows", [])
+    existing_rows = fetch_all(f"SELECT * FROM {real_table}")
+    existing_ids = {row["id"] for row in existing_rows if row.get("id")}
+    incoming_ids = {row.get("id") for row in rows if row.get("id")}
+    removed_ids = [row_id for row_id in existing_ids if row_id not in incoming_ids]
+    for row_id in removed_ids:
+        execute(f"DELETE FROM {real_table} WHERE id=?", (row_id,))
+
+    if table == "usuarios":
+        existing_by_id = {row["id"]: row for row in existing_rows if row.get("id")}
+        allowed_roles = {
+            "Administrador",
+            "Moderador",
+            "Analista Administrativo",
+            "Analista Tecnico",
+            "Agendamento",
+            "Execucao",
+        }
+        seen_login_keys: set[str] = set()
+        for row in rows:
+            temp_password = row.get("generated_temp_password")
+            clean = {k: v for k, v in row.items() if k not in {"_deleted", "generated_temp_password"}}
+            row_id = clean.get("id")
+            login_value = str(clean.get("email") or clean.get("usuario") or "").strip().lower()
+            nome = str(clean.get("nome") or "").strip()
+            if not login_value and not nome:
+                continue
+            if not login_value:
+                return jsonify({"error": "Informe o e-mail do usuario antes de salvar."}), 400
+            if login_value in seen_login_keys and not row_id:
+                return jsonify({"error": f"E-mail/usuario duplicado na tabela: {login_value}"}), 400
+            seen_login_keys.add(login_value)
+
+            previous = existing_by_id.get(row_id) if row_id else None
+            senha_hash = clean.get("senha_hash") or (previous.get("senha_hash") if previous else None)
+            acesso_pendente = bool_value(clean.get("acesso_pendente"))
+            ativo = bool_value(clean.get("ativo", True))
+            perfil = clean.get("perfil") or None
+            if perfil and perfil not in allowed_roles:
+                return jsonify({"error": f"Cargo invalido para o usuario {login_value}: {perfil}"}), 400
+            if not perfil:
+                acesso_pendente = True
+            if not senha_hash:
+                return jsonify({"error": f"Gere a senha temporaria do usuario {login_value} antes de salvar."}), 400
+
+            duplicate = fetch_one(
+                "SELECT id FROM usuarios WHERE (LOWER(email)=? OR LOWER(usuario)=?) AND id<>COALESCE(?, -1) LIMIT 1",
+                (login_value, login_value, row_id),
+            )
+            if duplicate:
+                return jsonify({"error": f"Ja existe um usuario cadastrado com o login {login_value}."}), 400
+
+            payload = {
+                "nome": nome or login_value,
+                "usuario": login_value,
+                "email": login_value,
+                "senha_hash": senha_hash,
+                "perfil": perfil,
+                "senha_temporaria": bool_value(clean.get("senha_temporaria")),
+                "trocar_senha_obrigatorio": bool_value(clean.get("trocar_senha_obrigatorio")),
+                "acesso_pendente": acesso_pendente,
+                "data_solicitacao": clean.get("data_solicitacao") or (previous.get("data_solicitacao") if previous else now_str()),
+                "ativo": ativo,
+            }
+            cols = list(payload.keys())
+            if row_id:
+                set_clause = ", ".join(f"{c}=?" for c in cols)
+                execute(f"UPDATE usuarios SET {set_clause} WHERE id=?", tuple(payload[c] for c in cols) + (row_id,))
+                if temp_password:
+                    assunto = "Senha temporaria - Sistema Bahia"
+                    corpo = (
+                        "Ola.\n\n"
+                        "Sua senha temporaria do Sistema Bahia foi redefinida.\n\n"
+                        f"E-mail: {login_value}\n"
+                        f"Senha temporaria: {temp_password}\n\n"
+                        "Ao entrar, defina uma nova senha."
+                    )
+                    ok, erro = try_send_email(login_value, assunto, corpo)
+                    register_notification(f"ACESSO-{login_value}", login_value, assunto, corpo, ok, erro)
+                if previous and (bool_value(previous.get("acesso_pendente")) or not previous.get("perfil")) and not acesso_pendente and perfil:
+                    assunto = "Acesso liberado - Sistema Bahia"
+                    corpo = (
+                        "Seu acesso ao Sistema Bahia foi liberado.\n\n"
+                        f"Cargo: {perfil}\n"
+                        f"Usuario: {login_value}\n\n"
+                        "Entre com sua senha para continuar."
+                    )
+                    ok, erro = try_send_email(login_value, assunto, corpo)
+                    register_notification(f"ACESSO-{login_value}", login_value, assunto, corpo, ok, erro)
+            else:
+                placeholders = ", ".join("?" for _ in cols)
+                execute(f"INSERT INTO usuarios({', '.join(cols)}) VALUES({placeholders})", tuple(payload[c] for c in cols))
+                if temp_password:
+                    assunto = "Senha temporaria - Sistema Bahia"
+                    corpo = (
+                        "Ola.\n\n"
+                        "Criamos um acesso para o Sistema Bahia.\n\n"
+                        f"E-mail: {login_value}\n"
+                        f"Senha temporaria: {temp_password}\n\n"
+                        "Ao entrar, defina uma nova senha."
+                    )
+                    ok, erro = try_send_email(login_value, assunto, corpo)
+                    register_notification(f"ACESSO-{login_value}", login_value, assunto, corpo, ok, erro)
+        return jsonify({"message": "Tabela salva."})
+
     for row in rows:
         row = {k: v for k, v in row.items() if k != "_deleted"}
         row_id = row.get("id")

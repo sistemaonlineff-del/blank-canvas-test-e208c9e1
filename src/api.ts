@@ -403,58 +403,7 @@ const supabaseApi = {
   },
 
   async register(email: string) {
-    const db = ensureSupabase();
-    const cleanEmail = email.trim().toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cleanEmail)) throw new Error("Informe um e-mail válido.");
-    const senha = tempPassword();
-    const senha_hash = await sha256(senha);
-    const data_solicitacao = nowStr();
-    const { data: existing, error: lookupError } = await db
-      .from("usuarios")
-      .select("*")
-      .or(`usuario.eq.${cleanEmail},email.eq.${cleanEmail}`)
-      .limit(1)
-      .maybeSingle();
-    throwDb(lookupError);
-    if (existing) {
-      const { error } = await db
-        .from("usuarios")
-        .update({ senha_hash, senha_temporaria: true, trocar_senha_obrigatorio: true, acesso_pendente: true, perfil: null, data_solicitacao, ativo: true })
-        .eq("id", existing.id);
-      throwDb(error);
-    } else {
-      const { error } = await db.from("usuarios").insert({
-        nome: cleanEmail,
-        usuario: cleanEmail,
-        email: cleanEmail,
-        senha_hash,
-        perfil: null,
-        senha_temporaria: true,
-        trocar_senha_obrigatorio: true,
-        acesso_pendente: true,
-        data_solicitacao,
-        ativo: true
-      });
-      throwDb(error);
-    }
-    await queueNotifications(
-      db,
-      `ACESSO-${cleanEmail}`,
-      [cleanEmail],
-      "Senha temporaria - Sistema Bahia",
-      `Ola.\n\nCriamos um acesso temporario para o Sistema Bahia.\n\nE-mail: ${cleanEmail}\nSenha temporaria: ${senha}\n\nAo entrar, defina uma nova senha.`
-    );
-    await notifyRoleGroup(
-      db,
-      `ACESSO-${cleanEmail}`,
-      [ROLE_ADMIN, ROLE_MODERATOR],
-      "Novo usuario pendente - Sistema Bahia",
-      `Um novo acesso esta aguardando definicao de cargo.\n\nUsuario: ${cleanEmail}\nData da solicitacao: ${data_solicitacao}`
-    );
-    return {
-      message: "Usuario criado. A senha temporaria foi registrada na fila de notificacoes do sistema.",
-      tempPassword: senha
-    };
+    return flaskApi.register(email);
   },
 
   async changePassword(userId: number, senha: string) {
@@ -624,137 +573,15 @@ const supabaseApi = {
   },
 
   async createProtocol(payload: Row) {
-    const db = ensureSupabase();
-    const protocolo = `BA-${new Date().toISOString().replace(/\D/g, "").slice(0, 17)}`;
-    const data_mov = nowStr();
-    const respostas = payload.respostas || [];
-    const { error } = await db.from("protocolos").insert({
-      protocolo,
-      entidade_id: payload.entidade_id,
-      curso_id: payload.curso_id,
-      area: payload.area,
-      pontuacao_curso: payload.pontuacao_curso || 0,
-      status: STATUS_VALIDACAO,
-      etapa_atual: ROLE_ANALISTA_ADM,
-      responsavel_atual: ROLE_ANALISTA_ADM,
-      solicitante_nome: payload.solicitante_nome || "",
-      solicitante_email: payload.solicitante_email || "",
-      data_abertura: data_mov,
-      data_atualizacao: data_mov,
-      observacao: payload.observacao || ""
-    });
-    if (error) throw new Error(`Erro ao criar protocolo do curso: ${error.message}`);
-    const { error: historyError } = await db.from("historico_fluxo").insert({
-      protocolo,
-      status_anterior: "",
-      status_novo: STATUS_VALIDACAO,
-      usuario: payload.usuario || "admin",
-      data_movimento: data_mov,
-      observacao: payload.observacao || ""
-    });
-    if (historyError) throw new Error(`Erro ao registrar histórico inicial do protocolo: ${historyError.message}`);
-    if (respostas.length) {
-      const { error: answersError } = await db.from("respostas_curso").insert(
-        respostas.map((r: Row) => ({
-          protocolo,
-          pergunta_id: r.pergunta_id,
-          pergunta: r.pergunta,
-          resposta: r.resposta,
-          pontuacao: r.pontuacao,
-          data_resposta: data_mov
-        }))
-      );
-      if (answersError) throw new Error(`Erro ao salvar questionário do curso: ${answersError.message}`);
-    }
-    await notifyRoleGroup(
-      db,
-      protocolo,
-      [ROLE_ADMIN, ROLE_MODERATOR, ROLE_ANALISTA_ADM],
-      `Nova demanda para validacao administrativa - ${protocolo}`,
-      `Uma nova demanda foi criada e aguarda validacao administrativa.\n\n${protocolSummary({
-        protocolo,
-        entidade: payload.entidade || "",
-        curso: payload.curso || "",
-        status: STATUS_VALIDACAO,
-        responsavel_atual: ROLE_ANALISTA_ADM,
-        etapa_atual: ROLE_ANALISTA_ADM,
-        solicitante_nome: payload.solicitante_nome || "",
-        solicitante_email: payload.solicitante_email || ""
-      })}`
-    );
-    return { message: "Protocolo criado.", protocolo };
+    return flaskApi.createProtocol(payload);
   },
 
   async advanceProtocol(protocolo: string, usuario: string, observacao = "", data_agendada = "") {
-    const db = ensureSupabase();
-    const { data: row, error: lookupError } = await db
-      .from("protocolos")
-      .select("*, entidades(entidade,nivel), cursos(curso)")
-      .eq("protocolo", protocolo)
-      .single();
-    throwDb(lookupError);
-    const [status, etapa] = nextStep(row.status);
-    const update: Row = { status, etapa_atual: etapa, responsavel_atual: etapa, data_atualizacao: nowStr() };
-    if (normalizeStatusKey(row.status) === "agendamento") update.data_agendada = data_agendada;
-    const { error } = await db.from("protocolos").update(update).eq("protocolo", protocolo);
-    throwDb(error);
-    await db.from("historico_fluxo").insert({ protocolo, status_anterior: row.status, status_novo: status, usuario, data_movimento: nowStr(), observacao });
-    const protocolView = {
-      ...row,
-      ...update,
-      entidade: row.entidades?.entidade,
-      nivel_entidade: row.entidades?.nivel,
-      curso: row.cursos?.curso
-    };
-    if (status === STATUS_FINALIZADO) {
-      await notifyRoleGroup(
-        db,
-        protocolo,
-        [ROLE_ADMIN, ROLE_MODERATOR, ...FLOW_NOTIFICATION_ORDER],
-        `Protocolo concluido - ${protocolo}`,
-        `O protocolo foi concluido com sucesso.\n\n${protocolSummary(protocolView)}\n\nObservacao: ${safeText(observacao)}`,
-        [row.solicitante_email]
-      );
-    } else {
-      await notifyRoleGroup(
-        db,
-        protocolo,
-        rolesForStatus(status),
-        `Nova etapa do protocolo - ${protocolo}`,
-        `O protocolo avancou para uma nova etapa e exige sua atuacao.\n\n${protocolSummary(protocolView)}\n\nObservacao: ${safeText(observacao)}`
-      );
-    }
-    return { message: "Fluxo atualizado.", status };
+    return flaskApi.advanceProtocol(protocolo, usuario, observacao, data_agendada);
   },
 
   async cancelProtocol(protocolo: string, usuario: string, observacao = "") {
-    const db = ensureSupabase();
-    const { data: row, error: lookupError } = await db
-      .from("protocolos")
-      .select("*, entidades(entidade,nivel), cursos(curso)")
-      .eq("protocolo", protocolo)
-      .single();
-    throwDb(lookupError);
-    const { error } = await db.from("protocolos").update({ status: STATUS_CANCELADO, etapa_atual: STATUS_CANCELADO, responsavel_atual: STATUS_CANCELADO, data_atualizacao: nowStr() }).eq("protocolo", protocolo);
-    throwDb(error);
-    await db.from("historico_fluxo").insert({ protocolo, status_anterior: row.status, status_novo: STATUS_CANCELADO, usuario, data_movimento: nowStr(), observacao });
-    await notifyRoleGroup(
-      db,
-      protocolo,
-      flowRolesUpToStatus(row.status),
-      `Protocolo cancelado - ${protocolo}`,
-      `O protocolo foi cancelado/reprovado no fluxo.\n\n${protocolSummary({
-        ...row,
-        status: STATUS_CANCELADO,
-        etapa_atual: STATUS_CANCELADO,
-        responsavel_atual: STATUS_CANCELADO,
-        entidade: row.entidades?.entidade,
-        nivel_entidade: row.entidades?.nivel,
-        curso: row.cursos?.curso
-      })}\n\nObservacao: ${safeText(observacao)}`,
-      [row.solicitante_email]
-    );
-    return { message: "Protocolo cancelado.", status: STATUS_CANCELADO };
+    return flaskApi.cancelProtocol(protocolo, usuario, observacao);
   },
 
   async forms(protocolo: string) {
@@ -772,22 +599,7 @@ const supabaseApi = {
   },
 
   async downloadOs(protocolo: string) {
-    const db = ensureSupabase();
-    const { data, error } = await db
-      .from("protocolos")
-      .select("*, entidades(*), cursos(*)")
-      .eq("protocolo", protocolo)
-      .single();
-    throwDb(error);
-    const protocol = {
-      ...data,
-      ...data.entidades,
-      curso: data.cursos?.curso,
-      entidade: data.entidades?.entidade,
-      nivel_entidade: data.entidades?.nivel
-    };
-    const blob = await buildProtocolOsDocument(protocol);
-    downloadBlob(blob, `${protocolo}_OS.doc`);
+    return flaskApi.downloadOs(protocolo);
   },
 
   async table(table: string) {
@@ -798,6 +610,9 @@ const supabaseApi = {
   },
 
   async saveTable(table: string, rows: Row[]) {
+    if (table === "usuarios") {
+      return flaskApi.saveTable(table, rows);
+    }
     const db = ensureSupabase();
     const normalizedRows = rows.map((row) => normalizeTableRow(table, { ...row }));
     if (table === "usuarios") {
