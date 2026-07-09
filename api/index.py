@@ -751,12 +751,15 @@ def create_entity():
     init_db()
     data = request.get_json(force=True)
     nome = (data.get("entidade") or "").strip()
+    cnpj = (data.get("cnpj") or "").strip()
     if not nome:
         return jsonify({"error": "Informe o nome da entidade."}), 400
+    if not cnpj:
+        return jsonify({"error": "Informe o CNPJ da entidade."}), 400
     row_id = execute(
-        """INSERT INTO entidades(entidade,status_qualificacao,data_cadastro,cadastrado_por,cadastrado_por_email,ativo)
-           VALUES(?,?,?,?,?,?) RETURNING id""",
-        (nome, CADASTRO_INICIAL, now_str(), data.get("usuario", "admin"), data.get("email", ""), True),
+        """INSERT INTO entidades(entidade,cnpj,status_qualificacao,data_cadastro,cadastrado_por,cadastrado_por_email,ativo)
+           VALUES(?,?,?,?,?,?,?) RETURNING id""",
+        (nome, cnpj, CADASTRO_INICIAL, now_str(), data.get("usuario", "admin"), data.get("email", ""), True),
     )
     return jsonify({"id": row_id, "message": "Entidade cadastrada."})
 

@@ -254,6 +254,7 @@ function HomePage({ user }: { user: User }) {
 
 function EntidadesPage({ user }: { user: User }) {
   const [nome, setNome] = useState("");
+  const [cnpj, setCnpj] = useState("");
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -264,8 +265,9 @@ function EntidadesPage({ user }: { user: User }) {
     setErrorMessage("");
     setSubmitting(true);
     try {
-      const result = await api.createEntity(nome, user);
+      const result = await api.createEntity(nome, cnpj, user);
       setNome("");
+      setCnpj("");
       setMessage(result.message);
       await reload();
     } catch (err: any) {
@@ -280,7 +282,8 @@ function EntidadesPage({ user }: { user: User }) {
       <form className="inline-form" onSubmit={create}>
         <label>Cadastrar Nova entidade</label>
         <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome da Entidade" />
-        <button disabled={!nome.trim() || submitting}>{submitting ? "Salvando..." : "Salvar"}</button>
+        <input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="CNPJ da Entidade" />
+        <button disabled={!nome.trim() || !cnpj.trim() || submitting}>{submitting ? "Salvando..." : "Salvar"}</button>
       </form>
       {message && <div className="alert success">{message}</div>}
       {errorMessage && <div className="alert error">{errorMessage}</div>}
@@ -395,7 +398,7 @@ function QualificationQuestionForm({ kind, pending, onSaved }: { kind: "geral" |
       <label>{kind === "geral" ? "Entidade aguardando Formulario Geral" : "Entidade aguardando BPF"}
         <select value={entidadeId} onChange={(e) => setEntidadeId(Number(e.target.value) || "")}>
           <option value="">Selecionar</option>
-          {pending.map((item) => <option key={item.id} value={item.id}>{item.id} | {item.entidade}</option>)}
+          {pending.map((item) => <option key={item.id} value={item.id}>{item.id} | {item.entidade} | {item.cnpj || "Sem CNPJ"}</option>)}
         </select>
       </label>
       {submitError && <div className="alert error">{submitError}</div>}
@@ -432,6 +435,35 @@ function QualificacaoPage() {
   const options = useAsync(api.qualificationOptions, [refreshKey]);
   const pendingGeral = useAsync(() => api.pendingQualification("geral"), [refreshKey]);
   const pendingBpf = useAsync(() => api.pendingQualification("bpf"), [refreshKey]);
+
+  useEffect(() => {
+    if (!selected) {
+      setFields({});
+      return;
+    }
+    setFields({
+      cnpj: selected.cnpj || "",
+      numero_convenio: selected.numero_convenio || "",
+      an_atep_ateg: selected.an_atep_ateg || "",
+      agente_negocio: selected.agente_negocio || "",
+      atep: selected.atep || "",
+      nome_ateg: selected.nome_ateg || "",
+      coordenador_tipo: selected.coordenador_tipo || "",
+      nome_coordenador: selected.nome_coordenador || "",
+      natureza_juridica: selected.natureza_juridica || "",
+      dap_caf: selected.dap_caf || "",
+      territorio_identidade: selected.territorio_identidade || "",
+      email_responsavel: selected.email_responsavel || "",
+      tipologia_beneficiarios: selected.tipologia_beneficiarios || "",
+      comunidade_tradicional: selected.comunidade_tradicional || "",
+      ativa_dinamica: selected.ativa_dinamica || "",
+      municipio_entidade: selected.municipio_entidade || "",
+      certificacao: selected.certificacao || "",
+      licenca_ambiental: selected.licenca_ambiental || "",
+      telefone: selected.telefone || "",
+      endereco: selected.endereco || ""
+    });
+  }, [selected]);
 
   async function saveCadastro(event: FormEvent) {
     event.preventDefault();
@@ -470,7 +502,7 @@ function QualificacaoPage() {
           <label>Entidade cadastrada na base</label>
           <select onChange={(e) => setSelected(options.data?.items.find((item) => String(item.id) === e.target.value) || null)} value={selected?.id || ""}>
             <option value="">Selecionar</option>
-            {(options.data?.items || []).map((item) => <option key={item.id} value={item.id}>{item.id} | {item.entidade}</option>)}
+            {(options.data?.items || []).map((item) => <option key={item.id} value={item.id}>{item.id} | {item.entidade} | {item.cnpj || "Sem CNPJ"}</option>)}
           </select>
           <div className="form-grid">
             <label>Número do Convênio

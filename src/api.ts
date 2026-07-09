@@ -357,8 +357,8 @@ const flaskApi = {
     request<{ user: User; message: string }>("/api/change-password", { method: "POST", body: JSON.stringify({ user_id: userId, senha }) }),
   dashboard: () => request<any>("/api/dashboard"),
   entities: () => request<{ items: Row[] }>("/api/entities"),
-  createEntity: (entidade: string, user: User) =>
-    request<{ id: number; message: string }>("/api/entities", { method: "POST", body: JSON.stringify({ entidade, usuario: user.usuario, email: user.email || "" }) }),
+  createEntity: (entidade: string, cnpj: string, user: User) =>
+    request<{ id: number; message: string }>("/api/entities", { method: "POST", body: JSON.stringify({ entidade, cnpj, usuario: user.usuario, email: user.email || "" }) }),
   qualificationOptions: () => request<{ items: Row[] }>("/api/qualification/start-options"),
   pendingQualification: (kind: "geral" | "bpf") => request<{ items: Row[] }>(`/api/qualification/pending/${kind}`),
   questions: (kind: "geral" | "bpf") => request<{ items: Row[] }>(`/api/questions/${kind}`),
@@ -456,10 +456,11 @@ const supabaseApi = {
     return { items: (data || []).filter(isActive) };
   },
 
-  async createEntity(entidade: string, user: User) {
+  async createEntity(entidade: string, cnpj: string, user: User) {
     const db = ensureSupabase();
     const { data, error } = await db.from("entidades").insert({
       entidade,
+      cnpj,
       status_qualificacao: CADASTRO_INICIAL,
       data_cadastro: nowStr(),
       cadastrado_por: user.usuario,
