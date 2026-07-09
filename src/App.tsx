@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Database, FileText, Home, LogOut, RefreshCw, Search, Settings, UserPlus } from "lucide-react";
-import { api, CADASTRO_OPTIONS, Row, User } from "./api";
+import { api, CADASTRO_OPTIONS, Row, User, USER_ROLE_OPTIONS } from "./api";
 import logo1 from "../assets/logo_1.jpeg";
 import logo2 from "../assets/logo_2.jpeg";
 import "./styles.css";
@@ -25,8 +25,36 @@ const tableLabels: Record<string, string> = {
   alternativas_curso: "Alternativas Curso",
   owners_area: "Owners por Área",
   entidades: "Entidades",
-  usuarios: "Usuários"
+  usuarios: "Usuários",
+  notificacoes: "Notificações"
 };
+
+function normalizeRoleKey(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function isModerator(user: User) {
+  return ["administrador", "moderador"].includes(normalizeRoleKey(user.perfil));
+}
+
+function canHandleStatus(user: User, status: unknown) {
+  const role = normalizeRoleKey(user.perfil);
+  const statusKey = String(status || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+  if (["administrador", "moderador"].includes(role)) return true;
+  if (role === "analista administrativo") return statusKey === "validacao administrativa";
+  if (role === "analista tecnico") return statusKey === "analise tecnica";
+  if (role === "agendamento") return statusKey === "agendamento";
+  if (role === "execucao") return statusKey === "execucao";
+  return false;
+}
 
 function useAsync<T>(factory: () => Promise<T>, deps: React.DependencyList) {
   const [data, setData] = useState<T | null>(null);
@@ -146,7 +174,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
   );
 }
 function Layout({ user, page, setPage, logout, children }: any) {
-  const admin = ["Administrador", "Moderador"].includes(user.perfil);
+  const admin = isModerator(user);
   const pages: { id: Page; icon: React.ReactNode }[] = [
     { id: "home", icon: <Home size={18} /> },
     { id: "qualificacao", icon: <UserPlus size={18} /> },
@@ -198,6 +226,7 @@ function Layout({ user, page, setPage, logout, children }: any) {
 
 function HomePage({ user }: { user: User }) {
   const { data, loading, error } = useAsync(api.dashboard, []);
+  const moderator = isModerator(user);
   if (loading) return <Loading />;
   if (error) return <ErrorMessage text={error} />;
   const cards = data?.cards || {};
@@ -206,6 +235,9 @@ function HomePage({ user }: { user: User }) {
       {(user.acesso_pendente || user.perfil === "Pendente") && (
         <div className="alert warning">Seu usuário está aguardando qualificação de atividade por um moderador.</div>
       )}
+      {moderator && Number(cards.usuariosPendentes || 0) > 0 && (
+        <div className="alert warning">Há {cards.usuariosPendentes} usuário(s) pendente(s) aguardando definição de cargo em Configurações → Usuários.</div>
+      )}
       <div className="cards-grid">
         <Metric title="Entidades cadastradas" value={cards.entidades} />
         <Metric title="Entidades qualificadas" value={cards.qualificadas} />
@@ -213,6 +245,7 @@ function HomePage({ user }: { user: User }) {
         <Metric title="BPF pendentes" value={cards.bpfPendentes} />
         <Metric title="Cursos disponíveis" value={cards.cursos} />
         <Metric title="Fluxos em andamento" value={cards.fluxos} />
+        {moderator && <Metric title="Usuários pendentes" value={cards.usuariosPendentes} />}
       </div>
       <DataTable rows={data?.protocolos || []} empty="Nenhum protocolo criado." />
     </PageBlock>
@@ -598,6 +631,7 @@ function CursosPageV2({ user }: { user: User }) {
     setSubmitting(true);
     try {
       const course = (courses.data?.items || []).find((item) => String(item.id) === String(payload.curso_id));
+      const entity = qualified.find((item) => String(item.id) === String(payload.entidade_id));
       const respostas = (courseQuestions.data?.items || []).map((question) => {
         const resposta = answers[question.id] || questionOptions(question, "curso")[0]?.label || "";
         const pontuacao = questionOptions(question, "curso").find((option) => option.label === resposta)?.points || 0;
@@ -606,6 +640,8 @@ function CursosPageV2({ user }: { user: User }) {
       const result = await api.createProtocol({
         ...payload,
         area: course?.area,
+        entidade: entity?.entidade,
+        curso: course?.curso,
         respostas,
         pontuacao_curso: respostas.reduce((total, row) => total + Number(row.pontuacao || 0), 0),
         solicitante_nome: user.nome,
@@ -735,7 +771,7 @@ function AprovacoesPageV2({ user, onDone }: { user: User; onDone: () => void }) 
   const [message, setMessage] = useState("");
   const protocols = useAsync(api.protocols, [message]);
   const forms = useAsync(() => selected ? api.forms(selected) : Promise.resolve(null), [selected, message]);
-  const rows = protocols.data?.items || [];
+  const rows = (protocols.data?.items || []).filter((row) => canHandleStatus(user, row.status));
   const filtered = filterProtocols(rows, status, query);
   const selectedRow = rows.find((row) => row.protocolo === selected);
 
@@ -787,9 +823,75 @@ function ConfigPage() {
     <PageBlock title="Configurações">
       <Tabs value={table} onChange={setTable as any} items={Object.entries(tableLabels)} />
       {message && <div className="alert success">{message}</div>}
-      <EditableTable rows={rows} onChange={setRows} />
+      {table === "usuarios" ? <UsersManagementTable rows={rows} onChange={setRows} /> : <EditableTable rows={rows} onChange={setRows} />}
       <button onClick={save}>Salvar tabela</button>
     </PageBlock>
+  );
+}
+
+function UsersManagementTable({ rows, onChange }: { rows: Row[]; onChange: (rows: Row[]) => void }) {
+  function update(index: number, patch: Row) {
+    const next = rows.slice();
+    next[index] = { ...next[index], ...patch };
+    onChange(next);
+  }
+
+  function statusLabel(row: Row) {
+    if (!row.id) return "Novo";
+    if (String(row.ativo) === "false" || row.ativo === false || row.ativo === 0) return "Inativo";
+    if (row.acesso_pendente || !row.perfil) return "Pendente";
+    return "Ativo";
+  }
+
+  return (
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>E-mail</th>
+            <th>Nome</th>
+            <th>Status</th>
+            <th>Cargo</th>
+            <th>Ativo</th>
+            <th>Pendente</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...rows, { email: "", nome: "", perfil: "", ativo: true, acesso_pendente: true }].map((row, index) => (
+            <tr key={index}>
+              <td><input value={row.email ?? row.usuario ?? ""} onChange={(e) => update(index, { email: e.target.value, usuario: e.target.value })} /></td>
+              <td><input value={row.nome ?? ""} onChange={(e) => update(index, { nome: e.target.value })} /></td>
+              <td>{statusLabel(row)}</td>
+              <td>
+                <select
+                  value={row.perfil ?? ""}
+                  onChange={(e) => update(index, { perfil: e.target.value || null, acesso_pendente: !e.target.value })}
+                >
+                  <option value="">Selecionar cargo</option>
+                  {USER_ROLE_OPTIONS.map((role) => <option key={role} value={role}>{role}</option>)}
+                </select>
+              </td>
+              <td>
+                <input
+                  type="checkbox"
+                  checked={Boolean(row.ativo ?? true)}
+                  onChange={(e) => update(index, { ativo: e.target.checked })}
+                />
+              </td>
+              <td>
+                <input
+                  type="checkbox"
+                  checked={Boolean(row.acesso_pendente ?? !row.perfil)}
+                  onChange={(e) => update(index, { acesso_pendente: e.target.checked })}
+                />
+              </td>
+              <td><button className="icon" onClick={() => onChange(rows.filter((_, i) => i !== index))}>Remover</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

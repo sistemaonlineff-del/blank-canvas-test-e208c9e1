@@ -213,6 +213,19 @@ create index if not exists idx_entidades_status_ativo on entidades (status_quali
 create index if not exists idx_protocolos_status on protocolos (status);
 create index if not exists idx_historico_protocolo on historico_fluxo (protocolo);
 
+alter table usuarios drop constraint if exists usuarios_perfil_check;
+alter table usuarios add constraint usuarios_perfil_check
+check (
+  perfil is null or perfil in (
+    'Administrador',
+    'Moderador',
+    'Analista Administrativo',
+    'Analista Tecnico',
+    'Agendamento',
+    'Execucao'
+  )
+);
+
 alter table usuarios disable row level security;
 alter table entidades disable row level security;
 alter table cursos disable row level security;

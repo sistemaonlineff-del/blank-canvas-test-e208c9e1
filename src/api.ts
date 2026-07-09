@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+﻿import { createClient } from "@supabase/supabase-js";
 
 export type User = {
   id: number;
@@ -13,6 +13,15 @@ export type User = {
 };
 
 export type Row = Record<string, any>;
+
+export const USER_ROLE_OPTIONS = [
+  "Administrador",
+  "Moderador",
+  "Analista Administrativo",
+  "Analista Tecnico",
+  "Agendamento",
+  "Execucao"
+] as const;
 
 export const CADASTRO_OPTIONS = {
   anAtepAteg: ["AN", "ATEP/ATEG"],
@@ -57,6 +66,14 @@ const STATUS_FLUXO = [
 
 const FORM_GERAL_PENDENTE = "Formulario geral pendente";
 const CADASTRO_INICIAL = "Cadastro inicial";
+const ROLE_ADMIN = "Administrador";
+const ROLE_MODERATOR = "Moderador";
+const ROLE_ANALISTA_ADM = "Analista Administrativo";
+const ROLE_ANALISTA_TECNICO = "Analista Tecnico";
+const ROLE_AGENDAMENTO = "Agendamento";
+const ROLE_EXECUCAO = "Execucao";
+
+const FLOW_NOTIFICATION_ORDER = [ROLE_ANALISTA_ADM, ROLE_ANALISTA_TECNICO, ROLE_AGENDAMENTO, ROLE_EXECUCAO];
 
 async function sha256(value: string) {
   const buffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -80,14 +97,41 @@ function normalizeStatusKey(value: unknown) {
     .trim();
 }
 
+function normalizeRoleKey(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
 function nextStep(status: string) {
   const steps: Record<string, [string, string]> = {
-    "validacao administrativa": [STATUS_ANALISE, "Tecnico"],
-    "analise tecnica": [STATUS_AGENDAMENTO, "Agendamento"],
-    agendamento: [STATUS_EXECUCAO, "Executor"],
+    "validacao administrativa": [STATUS_ANALISE, ROLE_ANALISTA_TECNICO],
+    "analise tecnica": [STATUS_AGENDAMENTO, ROLE_AGENDAMENTO],
+    agendamento: [STATUS_EXECUCAO, ROLE_EXECUCAO],
     execucao: [STATUS_FINALIZADO, STATUS_FINALIZADO]
   };
   return steps[normalizeStatusKey(status)] || [status, ""];
+}
+
+function rolesForStatus(status: unknown) {
+  const key = normalizeStatusKey(status);
+  if (key === "validacao administrativa") return [ROLE_ADMIN, ROLE_MODERATOR, ROLE_ANALISTA_ADM];
+  if (key === "analise tecnica") return [ROLE_ADMIN, ROLE_MODERATOR, ROLE_ANALISTA_TECNICO];
+  if (key === "agendamento") return [ROLE_ADMIN, ROLE_MODERATOR, ROLE_AGENDAMENTO];
+  if (key === "execucao") return [ROLE_ADMIN, ROLE_MODERATOR, ROLE_EXECUCAO];
+  return [ROLE_ADMIN, ROLE_MODERATOR];
+}
+
+function flowRolesUpToStatus(status: unknown) {
+  const key = normalizeStatusKey(status);
+  const index =
+    key === "validacao administrativa" ? 0 :
+      key === "analise tecnica" ? 1 :
+        key === "agendamento" ? 2 :
+          key === "execucao" ? 3 : FLOW_NOTIFICATION_ORDER.length - 1;
+  return [ROLE_ADMIN, ROLE_MODERATOR, ...FLOW_NOTIFICATION_ORDER.slice(0, index + 1)];
 }
 
 function levelByPoints(points: number) {
@@ -102,6 +146,10 @@ function dbTrue(value: unknown) {
 
 function dbFalse(value: unknown) {
   return value === false || value === 0 || value === "0" || String(value).toLowerCase() === "false";
+}
+
+function unique<T>(items: T[]) {
+  return Array.from(new Set(items));
 }
 
 function isActive(row: Row) {
@@ -185,6 +233,86 @@ async function buildProtocolOsDocument(protocol: Row) {
   `;
 
   return new Blob(["\ufeff", html], { type: "application/msword" });
+}
+
+async function fetchActiveUsersByRoles(db: ReturnType<typeof ensureSupabase>, roles: string[]) {
+  const allowedRoles = unique(roles).filter(Boolean);
+  if (!allowedRoles.length) return [];
+  const { data, error } = await db
+    .from("usuarios")
+    .select("*")
+    .in("perfil", allowedRoles)
+    .eq("ativo", true)
+    .eq("acesso_pendente", false);
+  throwDb(error);
+  return (data || []).filter((row) => isActive(row) && !dbTrue(row.acesso_pendente));
+}
+
+async function queueNotifications(
+  db: ReturnType<typeof ensureSupabase>,
+  protocolo: string,
+  recipients: string[],
+  assunto: string,
+  corpo: string
+) {
+  const destinatarios = unique(
+    recipients
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (!destinatarios.length) return;
+  const payload = destinatarios.map((destinatario) => ({
+    protocolo,
+    destinatario,
+    assunto,
+    corpo,
+    enviado: 0,
+    data_criacao: nowStr(),
+    erro: "Fila registrada. Configure SMTP/Edge Function para envio automatico real."
+  }));
+  const { error } = await db.from("notificacoes").insert(payload);
+  throwDb(error);
+}
+
+function protocolSummary(row: Row) {
+  return [
+    `Protocolo: ${safeText(row.protocolo)}`,
+    `Entidade: ${safeText(row.entidade)}`,
+    `Curso: ${safeText(row.curso)}`,
+    `Status: ${safeText(row.status)}`,
+    `Responsavel atual: ${safeText(row.responsavel_atual || row.etapa_atual)}`,
+    `Solicitante: ${safeText(row.solicitante_nome)} <${safeText(row.solicitante_email)}>`
+  ].join("\n");
+}
+
+async function notifyRoleGroup(
+  db: ReturnType<typeof ensureSupabase>,
+  protocolo: string,
+  roles: string[],
+  assunto: string,
+  corpo: string,
+  extraRecipients: string[] = []
+) {
+  const users = await fetchActiveUsersByRoles(db, roles);
+  await queueNotifications(
+    db,
+    protocolo,
+    [...users.map((user) => user.email || user.usuario), ...extraRecipients],
+    assunto,
+    corpo
+  );
+}
+
+function normalizeTableRow(table: string, row: Row) {
+  if (table !== "usuarios") return row;
+  return {
+    ...row,
+    perfil: row.perfil || null,
+    ativo: dbTrue(row.ativo),
+    acesso_pendente: dbTrue(row.acesso_pendente),
+    senha_temporaria: dbTrue(row.senha_temporaria),
+    trocar_senha_obrigatorio: dbTrue(row.trocar_senha_obrigatorio)
+  };
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -282,7 +410,7 @@ const supabaseApi = {
     if (existing) {
       const { error } = await db
         .from("usuarios")
-        .update({ senha_hash, senha_temporaria: true, trocar_senha_obrigatorio: true, acesso_pendente: true, perfil: "Pendente", data_solicitacao })
+        .update({ senha_hash, senha_temporaria: true, trocar_senha_obrigatorio: true, acesso_pendente: true, perfil: null, data_solicitacao, ativo: true })
         .eq("id", existing.id);
       throwDb(error);
     } else {
@@ -291,7 +419,7 @@ const supabaseApi = {
         usuario: cleanEmail,
         email: cleanEmail,
         senha_hash,
-        perfil: "Pendente",
+        perfil: null,
         senha_temporaria: true,
         trocar_senha_obrigatorio: true,
         acesso_pendente: true,
@@ -300,17 +428,22 @@ const supabaseApi = {
       });
       throwDb(error);
     }
-    await db.from("notificacoes").insert({
-      protocolo: `ACESSO-${cleanEmail}`,
-      destinatario: cleanEmail,
-      assunto: "Senha temporária - Sistema Bahia",
-      corpo: `Olá.\n\nCriamos um acesso temporário para o Sistema Bahia.\n\nE-mail: ${cleanEmail}\nSenha temporária: ${senha}\n\nAo entrar, defina uma nova senha.`,
-      enviado: false,
-      data_criacao: data_solicitacao,
-      erro: "E-mail real precisa de Edge Function/SMTP. Senha temporária registrada no sistema."
-    });
+    await queueNotifications(
+      db,
+      `ACESSO-${cleanEmail}`,
+      [cleanEmail],
+      "Senha temporaria - Sistema Bahia",
+      `Ola.\n\nCriamos um acesso temporario para o Sistema Bahia.\n\nE-mail: ${cleanEmail}\nSenha temporaria: ${senha}\n\nAo entrar, defina uma nova senha.`
+    );
+    await notifyRoleGroup(
+      db,
+      `ACESSO-${cleanEmail}`,
+      [ROLE_ADMIN, ROLE_MODERATOR],
+      "Novo usuario pendente - Sistema Bahia",
+      `Um novo acesso esta aguardando definicao de cargo.\n\nUsuario: ${cleanEmail}\nData da solicitacao: ${data_solicitacao}`
+    );
     return {
-      message: "Usuário criado. A senha temporária foi registrada nas notificações do sistema.",
+      message: "Usuario criado. A senha temporaria foi registrada na fila de notificacoes do sistema.",
       tempPassword: senha
     };
   },
@@ -331,15 +464,17 @@ const supabaseApi = {
 
   async dashboard() {
     const db = ensureSupabase();
-    const [entidadesRes, cursosRes, protocolosRes] = await Promise.all([
+    const [entidadesRes, cursosRes, protocolosRes, usuariosRes] = await Promise.all([
       db.from("entidades").select("*"),
       db.from("cursos").select("*"),
-      db.from("protocolos").select("*")
+      db.from("protocolos").select("*"),
+      db.from("usuarios").select("*")
     ]);
-    throwDb(entidadesRes.error || cursosRes.error || protocolosRes.error);
+    throwDb(entidadesRes.error || cursosRes.error || protocolosRes.error || usuariosRes.error);
     const entidades = (entidadesRes.data || []).filter(isActive);
     const cursos = (cursosRes.data || []).filter(isActive);
     const protocolos = protocolosRes.data || [];
+    const usuarios = (usuariosRes.data || []).filter(isActive);
     return {
       cards: {
         entidades: entidades.length,
@@ -347,7 +482,8 @@ const supabaseApi = {
         formGeralPendentes: entidades.filter((e) => e.status_qualificacao === FORM_GERAL_PENDENTE).length,
         bpfPendentes: entidades.filter((e) => e.status_qualificacao === "BPF pendente").length,
         cursos: cursos.length,
-        fluxos: protocolos.filter((p) => ![STATUS_FINALIZADO, STATUS_CANCELADO, STATUS_REPROVADO].includes(p.status)).length
+        fluxos: protocolos.filter((p) => ![STATUS_FINALIZADO, STATUS_CANCELADO, STATUS_REPROVADO].includes(p.status)).length,
+        usuariosPendentes: usuarios.filter((u) => dbTrue(u.acesso_pendente) || !u.perfil).length
       },
       protocolos: protocolos.slice(-20),
       entidadesPorNivel: entidades,
@@ -490,8 +626,8 @@ const supabaseApi = {
       area: payload.area,
       pontuacao_curso: payload.pontuacao_curso || 0,
       status: STATUS_VALIDACAO,
-      etapa_atual: "Administrativo",
-      responsavel_atual: "Administrativo",
+      etapa_atual: ROLE_ANALISTA_ADM,
+      responsavel_atual: ROLE_ANALISTA_ADM,
       solicitante_nome: payload.solicitante_nome || "",
       solicitante_email: payload.solicitante_email || "",
       data_abertura: data_mov,
@@ -521,12 +657,32 @@ const supabaseApi = {
       );
       if (answersError) throw new Error(`Erro ao salvar questionário do curso: ${answersError.message}`);
     }
+    await notifyRoleGroup(
+      db,
+      protocolo,
+      [ROLE_ADMIN, ROLE_MODERATOR, ROLE_ANALISTA_ADM],
+      `Nova demanda para validacao administrativa - ${protocolo}`,
+      `Uma nova demanda foi criada e aguarda validacao administrativa.\n\n${protocolSummary({
+        protocolo,
+        entidade: payload.entidade || "",
+        curso: payload.curso || "",
+        status: STATUS_VALIDACAO,
+        responsavel_atual: ROLE_ANALISTA_ADM,
+        etapa_atual: ROLE_ANALISTA_ADM,
+        solicitante_nome: payload.solicitante_nome || "",
+        solicitante_email: payload.solicitante_email || ""
+      })}`
+    );
     return { message: "Protocolo criado.", protocolo };
   },
 
   async advanceProtocol(protocolo: string, usuario: string, observacao = "", data_agendada = "") {
     const db = ensureSupabase();
-    const { data: row, error: lookupError } = await db.from("protocolos").select("*").eq("protocolo", protocolo).single();
+    const { data: row, error: lookupError } = await db
+      .from("protocolos")
+      .select("*, entidades(entidade,nivel), cursos(curso)")
+      .eq("protocolo", protocolo)
+      .single();
     throwDb(lookupError);
     const [status, etapa] = nextStep(row.status);
     const update: Row = { status, etapa_atual: etapa, responsavel_atual: etapa, data_atualizacao: nowStr() };
@@ -534,16 +690,61 @@ const supabaseApi = {
     const { error } = await db.from("protocolos").update(update).eq("protocolo", protocolo);
     throwDb(error);
     await db.from("historico_fluxo").insert({ protocolo, status_anterior: row.status, status_novo: status, usuario, data_movimento: nowStr(), observacao });
+    const protocolView = {
+      ...row,
+      ...update,
+      entidade: row.entidades?.entidade,
+      nivel_entidade: row.entidades?.nivel,
+      curso: row.cursos?.curso
+    };
+    if (status === STATUS_FINALIZADO) {
+      await notifyRoleGroup(
+        db,
+        protocolo,
+        [ROLE_ADMIN, ROLE_MODERATOR, ...FLOW_NOTIFICATION_ORDER],
+        `Protocolo concluido - ${protocolo}`,
+        `O protocolo foi concluido com sucesso.\n\n${protocolSummary(protocolView)}\n\nObservacao: ${safeText(observacao)}`,
+        [row.solicitante_email]
+      );
+    } else {
+      await notifyRoleGroup(
+        db,
+        protocolo,
+        rolesForStatus(status),
+        `Nova etapa do protocolo - ${protocolo}`,
+        `O protocolo avancou para uma nova etapa e exige sua atuacao.\n\n${protocolSummary(protocolView)}\n\nObservacao: ${safeText(observacao)}`
+      );
+    }
     return { message: "Fluxo atualizado.", status };
   },
 
   async cancelProtocol(protocolo: string, usuario: string, observacao = "") {
     const db = ensureSupabase();
-    const { data: row, error: lookupError } = await db.from("protocolos").select("*").eq("protocolo", protocolo).single();
+    const { data: row, error: lookupError } = await db
+      .from("protocolos")
+      .select("*, entidades(entidade,nivel), cursos(curso)")
+      .eq("protocolo", protocolo)
+      .single();
     throwDb(lookupError);
     const { error } = await db.from("protocolos").update({ status: STATUS_CANCELADO, etapa_atual: STATUS_CANCELADO, responsavel_atual: STATUS_CANCELADO, data_atualizacao: nowStr() }).eq("protocolo", protocolo);
     throwDb(error);
     await db.from("historico_fluxo").insert({ protocolo, status_anterior: row.status, status_novo: STATUS_CANCELADO, usuario, data_movimento: nowStr(), observacao });
+    await notifyRoleGroup(
+      db,
+      protocolo,
+      flowRolesUpToStatus(row.status),
+      `Protocolo cancelado - ${protocolo}`,
+      `O protocolo foi cancelado/reprovado no fluxo.\n\n${protocolSummary({
+        ...row,
+        status: STATUS_CANCELADO,
+        etapa_atual: STATUS_CANCELADO,
+        responsavel_atual: STATUS_CANCELADO,
+        entidade: row.entidades?.entidade,
+        nivel_entidade: row.entidades?.nivel,
+        curso: row.cursos?.curso
+      })}\n\nObservacao: ${safeText(observacao)}`,
+      [row.solicitante_email]
+    );
     return { message: "Protocolo cancelado.", status: STATUS_CANCELADO };
   },
 
@@ -590,13 +791,34 @@ const supabaseApi = {
   async saveTable(table: string, rows: Row[]) {
     const db = ensureSupabase();
     for (const row of rows) {
-      const clean = { ...row };
+      const clean = normalizeTableRow(table, { ...row });
       delete clean._deleted;
       if (clean.id) {
         const id = clean.id;
+        const previous =
+          table === "usuarios"
+            ? await db.from(table).select("*").eq("id", id).maybeSingle()
+            : { data: null, error: null };
+        throwDb(previous.error);
         delete clean.id;
         const { error } = await db.from(table).update(clean).eq("id", id);
         throwDb(error);
+        if (
+          table === "usuarios" &&
+          previous.data &&
+          (dbTrue(previous.data.acesso_pendente) || !previous.data.perfil) &&
+          !dbTrue(clean.acesso_pendente) &&
+          clean.perfil &&
+          (clean.email || clean.usuario)
+        ) {
+          await queueNotifications(
+            db,
+            `ACESSO-${clean.email || clean.usuario}`,
+            [clean.email || clean.usuario],
+            "Acesso liberado - Sistema Bahia",
+            `Seu acesso ao Sistema Bahia foi liberado.\n\nCargo: ${clean.perfil}\nUsuario: ${clean.email || clean.usuario}\n\nEntre com a senha definida para continuar.`
+          );
+        }
       } else if (Object.values(clean).some((value) => value !== "" && value != null)) {
         const { error } = await db.from(table).insert(clean);
         throwDb(error);
@@ -607,3 +829,4 @@ const supabaseApi = {
 };
 
 export const api = useSupabase ? supabaseApi : flaskApi;
+
