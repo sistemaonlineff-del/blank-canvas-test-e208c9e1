@@ -840,6 +840,22 @@ function ConfigPage() {
 }
 
 function UsersManagementTable({ rows, onChange }: { rows: Row[]; onChange: (rows: Row[]) => void }) {
+  function addUser() {
+    onChange([
+      {
+        email: "",
+        usuario: "",
+        nome: "",
+        perfil: null,
+        ativo: true,
+        acesso_pendente: false,
+        senha_temporaria: false,
+        trocar_senha_obrigatorio: false
+      },
+      ...rows
+    ]);
+  }
+
   function update(index: number, patch: Row) {
     const next = rows.slice();
     next[index] = { ...next[index], ...patch };
@@ -874,56 +890,59 @@ function UsersManagementTable({ rows, onChange }: { rows: Row[]; onChange: (rows
   }
 
   return (
-    <div className="table-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th>E-mail</th>
-            <th>Nome</th>
-            <th>Redefinir senha</th>
-            <th>Status</th>
-            <th>Cargo</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => (
-            <tr key={index}>
-              <td><input value={row.email ?? row.usuario ?? ""} onChange={(e) => update(index, { email: e.target.value, usuario: e.target.value })} /></td>
-              <td><input value={row.nome ?? ""} onChange={(e) => update(index, { nome: e.target.value })} /></td>
-              <td>
-                <div className="password-reset-cell">
-                  <button className="icon" type="button" onClick={() => resetPassword(index)}>Gerar senha</button>
-                  <span className="temp-password">{row.generated_temp_password || "-"}</span>
-                </div>
-              </td>
-              <td>
-                <select
-                  value={statusValue(row)}
-                  onChange={(e) => update(index, {
-                    ativo: e.target.value !== "Inativo",
-                    acesso_pendente: e.target.value === "Pendente"
-                  })}
-                >
-                  <option value="Ativo">Ativo</option>
-                  <option value="Inativo">Inativo</option>
-                  <option value="Pendente">Pendente</option>
-                </select>
-              </td>
-              <td>
-                <select
-                  value={row.perfil ?? ""}
-                  onChange={(e) => update(index, { perfil: e.target.value || null, acesso_pendente: !e.target.value })}
-                >
-                  <option value="">Selecionar cargo</option>
-                  {USER_ROLE_OPTIONS.map((role) => <option key={role} value={role}>{role}</option>)}
-                </select>
-              </td>
-              <td><button className="icon" onClick={() => onChange(rows.filter((_, i) => i !== index))}>Remover</button></td>
+    <div className="users-table-wrap">
+      <button type="button" onClick={addUser}>Adicionar usuario</button>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>E-mail</th>
+              <th>Nome</th>
+              <th>Redefinir senha</th>
+              <th>Status</th>
+              <th>Cargo</th>
+              <th></th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={index}>
+                <td><input value={row.email ?? row.usuario ?? ""} onChange={(e) => update(index, { email: e.target.value, usuario: e.target.value })} /></td>
+                <td><input value={row.nome ?? ""} onChange={(e) => update(index, { nome: e.target.value })} /></td>
+                <td>
+                  <div className="password-reset-cell">
+                    <button className="icon" type="button" onClick={() => resetPassword(index)}>Gerar senha</button>
+                    <span className="temp-password">{row.generated_temp_password || "-"}</span>
+                  </div>
+                </td>
+                <td>
+                  <select
+                    value={statusValue(row)}
+                    onChange={(e) => update(index, {
+                      ativo: e.target.value !== "Inativo",
+                      acesso_pendente: e.target.value === "Pendente"
+                    })}
+                  >
+                    <option value="Ativo">Ativo</option>
+                    <option value="Inativo">Inativo</option>
+                    <option value="Pendente">Pendente</option>
+                  </select>
+                </td>
+                <td>
+                  <select
+                    value={row.perfil ?? ""}
+                    onChange={(e) => update(index, { perfil: e.target.value || null, acesso_pendente: !e.target.value })}
+                  >
+                    <option value="">Selecionar cargo</option>
+                    {USER_ROLE_OPTIONS.map((role) => <option key={role} value={role}>{role}</option>)}
+                  </select>
+                </td>
+                <td><button className="icon" onClick={() => onChange(rows.filter((_, i) => i !== index))}>Remover</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
