@@ -23,14 +23,22 @@ const supabaseAnonKey =
 const useSupabase = Boolean(supabaseUrl && supabaseAnonKey);
 const supabase = useSupabase ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
+const STATUS_VALIDACAO = "Validacao Administrativa";
+const STATUS_ANALISE = "Analise Tecnica";
+const STATUS_AGENDAMENTO = "Agendamento";
+const STATUS_EXECUCAO = "Execucao";
+const STATUS_FINALIZADO = "Finalizado";
+const STATUS_CANCELADO = "Cancelado";
+const STATUS_REPROVADO = "Reprovado";
+
 const STATUS_FLUXO = [
-  "Validação Administrativa",
-  "Análise Técnica",
-  "Agendamento",
-  "Execução",
-  "Finalizado",
-  "Cancelado",
-  "Reprovado"
+  STATUS_VALIDACAO,
+  STATUS_ANALISE,
+  STATUS_AGENDAMENTO,
+  STATUS_EXECUCAO,
+  STATUS_FINALIZADO,
+  STATUS_CANCELADO,
+  STATUS_REPROVADO
 ];
 
 const FORM_GERAL_PENDENTE = "Formulario geral pendente";
@@ -50,14 +58,22 @@ function tempPassword() {
   return Array.from({ length: 10 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
 }
 
+function normalizeStatusKey(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
 function nextStep(status: string) {
   const steps: Record<string, [string, string]> = {
-    "Validação Administrativa": ["Análise Técnica", "Técnico"],
-    "Análise Técnica": ["Agendamento", "Agendamento"],
-    Agendamento: ["Execução", "Executor"],
-    Execução: ["Finalizado", "Finalizado"]
+    "validacao administrativa": [STATUS_ANALISE, "Tecnico"],
+    "analise tecnica": [STATUS_AGENDAMENTO, "Agendamento"],
+    agendamento: [STATUS_EXECUCAO, "Executor"],
+    execucao: [STATUS_FINALIZADO, STATUS_FINALIZADO]
   };
-  return steps[status] || [status, ""];
+  return steps[normalizeStatusKey(status)] || [status, ""];
 }
 
 function levelByPoints(points: number) {
@@ -235,7 +251,7 @@ const supabaseApi = {
         formGeralPendentes: entidades.filter((e) => e.status_qualificacao === FORM_GERAL_PENDENTE).length,
         bpfPendentes: entidades.filter((e) => e.status_qualificacao === "BPF pendente").length,
         cursos: cursos.length,
-        fluxos: protocolos.filter((p) => !["Finalizado", "Cancelado", "Reprovado"].includes(p.status)).length
+        fluxos: protocolos.filter((p) => ![STATUS_FINALIZADO, STATUS_CANCELADO, STATUS_REPROVADO].includes(p.status)).length
       },
       protocolos: protocolos.slice(-20),
       entidadesPorNivel: entidades,
@@ -377,7 +393,7 @@ const supabaseApi = {
       curso_id: payload.curso_id,
       area: payload.area,
       pontuacao_curso: payload.pontuacao_curso || 0,
-      status: "Validação Administrativa",
+      status: STATUS_VALIDACAO,
       etapa_atual: "Administrativo",
       responsavel_atual: "Administrativo",
       solicitante_nome: payload.solicitante_nome || "",
@@ -390,7 +406,7 @@ const supabaseApi = {
     const { error: historyError } = await db.from("historico_fluxo").insert({
       protocolo,
       status_anterior: "",
-      status_novo: "Validação Administrativa",
+      status_novo: STATUS_VALIDACAO,
       usuario: payload.usuario || "admin",
       data_movimento: data_mov,
       observacao: payload.observacao || ""
@@ -418,7 +434,7 @@ const supabaseApi = {
     throwDb(lookupError);
     const [status, etapa] = nextStep(row.status);
     const update: Row = { status, etapa_atual: etapa, responsavel_atual: etapa, data_atualizacao: nowStr() };
-    if (row.status === "Agendamento") update.data_agendada = data_agendada;
+    if (normalizeStatusKey(row.status) === "agendamento") update.data_agendada = data_agendada;
     const { error } = await db.from("protocolos").update(update).eq("protocolo", protocolo);
     throwDb(error);
     await db.from("historico_fluxo").insert({ protocolo, status_anterior: row.status, status_novo: status, usuario, data_movimento: nowStr(), observacao });
@@ -429,10 +445,10 @@ const supabaseApi = {
     const db = ensureSupabase();
     const { data: row, error: lookupError } = await db.from("protocolos").select("*").eq("protocolo", protocolo).single();
     throwDb(lookupError);
-    const { error } = await db.from("protocolos").update({ status: "Cancelado", etapa_atual: "Cancelado", responsavel_atual: "Cancelado", data_atualizacao: nowStr() }).eq("protocolo", protocolo);
+    const { error } = await db.from("protocolos").update({ status: STATUS_CANCELADO, etapa_atual: STATUS_CANCELADO, responsavel_atual: STATUS_CANCELADO, data_atualizacao: nowStr() }).eq("protocolo", protocolo);
     throwDb(error);
-    await db.from("historico_fluxo").insert({ protocolo, status_anterior: row.status, status_novo: "Cancelado", usuario, data_movimento: nowStr(), observacao });
-    return { message: "Protocolo cancelado.", status: "Cancelado" };
+    await db.from("historico_fluxo").insert({ protocolo, status_anterior: row.status, status_novo: STATUS_CANCELADO, usuario, data_movimento: nowStr(), observacao });
+    return { message: "Protocolo cancelado.", status: STATUS_CANCELADO };
   },
 
   async forms(protocolo: string) {
