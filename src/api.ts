@@ -319,7 +319,16 @@ const supabaseApi = {
     const pontos = respostas.reduce((sum, row) => sum + Number(row.pontuacao || 0), 0);
     const { error: deleteError } = await db.from("respostas_bpf").delete().eq("entidade_id", entidade_id);
     if (deleteError) throw new Error(`Erro ao limpar respostas do BPF: ${deleteError.message}`);
-    const { error: insertError } = await db.from("respostas_bpf").insert(respostas.map((r) => ({ ...r, entidade_id, data_resposta: nowStr() })));
+    const { error: insertError } = await db.from("respostas_bpf").insert(
+      respostas.map((r) => ({
+        entidade_id,
+        pergunta_id: r.pergunta_id,
+        pergunta: r.pergunta,
+        resposta: r.resposta,
+        pontuacao: r.pontuacao,
+        data_resposta: nowStr()
+      }))
+    );
     if (insertError) throw new Error(`Erro ao salvar respostas do BPF: ${insertError.message}`);
     const { error } = await db.from("entidades").update({ status_qualificacao: "Concluída", pontuacao_q2: pontos }).eq("id", entidade_id);
     if (error) throw new Error(`Erro ao concluir a qualificação da entidade apos o BPF: ${error.message}`);
