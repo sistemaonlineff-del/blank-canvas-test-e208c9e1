@@ -222,14 +222,24 @@ function HomePage({ user }: { user: User }) {
 function EntidadesPage({ user }: { user: User }) {
   const [nome, setNome] = useState("");
   const [message, setMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const { data, loading, error, reload } = useAsync(api.entities, [message]);
 
   async function create(event: FormEvent) {
     event.preventDefault();
-    const result = await api.createEntity(nome, user);
-    setNome("");
-    setMessage(result.message);
-    await reload();
+    setErrorMessage("");
+    setSubmitting(true);
+    try {
+      const result = await api.createEntity(nome, user);
+      setNome("");
+      setMessage(result.message);
+      await reload();
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erro ao cadastrar entidade.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -237,9 +247,10 @@ function EntidadesPage({ user }: { user: User }) {
       <form className="inline-form" onSubmit={create}>
         <label>Cadastrar Nova entidade</label>
         <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome da Entidade" />
-        <button>Salvar</button>
+        <button disabled={!nome.trim() || submitting}>{submitting ? "Salvando..." : "Salvar"}</button>
       </form>
       {message && <div className="alert success">{message}</div>}
+      {errorMessage && <div className="alert error">{errorMessage}</div>}
       {loading ? <Loading /> : error ? <ErrorMessage text={error} /> : <DataTable rows={data?.items || []} />}
     </PageBlock>
   );
@@ -382,6 +393,8 @@ function QualificacaoPage() {
   const [selected, setSelected] = useState<Row | null>(null);
   const [fields, setFields] = useState<Row>({});
   const [message, setMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [savingCadastro, setSavingCadastro] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const options = useAsync(api.qualificationOptions, [refreshKey]);
   const pendingGeral = useAsync(() => api.pendingQualification("geral"), [refreshKey]);
@@ -389,13 +402,21 @@ function QualificacaoPage() {
 
   async function saveCadastro(event: FormEvent) {
     event.preventDefault();
+    setErrorMessage("");
     if (!selected) return;
-    const result = await api.saveCadastro(selected.id, fields);
-    setMessage(result.message);
-    setRefreshKey((value) => value + 1);
-    setSelected(null);
-    setFields({});
-    setTab("geral");
+    setSavingCadastro(true);
+    try {
+      const result = await api.saveCadastro(selected.id, fields);
+      setMessage(result.message);
+      setRefreshKey((value) => value + 1);
+      setSelected(null);
+      setFields({});
+      setTab("geral");
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erro ao salvar dados cadastrais.");
+    } finally {
+      setSavingCadastro(false);
+    }
   }
 
   return (
@@ -406,6 +427,7 @@ function QualificacaoPage() {
         ["bpf", "Aguardando Finalizar Formulario BPF"]
       ]} />
       {message && <div className="alert success">{message}</div>}
+      {errorMessage && <div className="alert error">{errorMessage}</div>}
       {tab === "cadastro" && (
         <form className="panel" onSubmit={saveCadastro}>
           <label>Entidade cadastrada na base</label>
@@ -420,7 +442,7 @@ function QualificacaoPage() {
               </label>
             ))}
           </div>
-          <button disabled={!selected}>Salvar dados cadastrais</button>
+          <button disabled={!selected || savingCadastro}>{savingCadastro ? "Salvando..." : "Salvar dados cadastrais"}</button>
         </form>
       )}
       {tab === "geral" && <QualificationQuestionForm kind="geral" pending={pendingGeral.data?.items || []} onSaved={(text) => { setMessage(text); setRefreshKey((value) => value + 1); setTab("bpf"); }} />}
@@ -481,6 +503,8 @@ function CursosPageV2({ user }: { user: User }) {
   const [payload, setPayload] = useState<Row>({});
   const [answers, setAnswers] = useState<Row>({});
   const [message, setMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const courseQuestions = useAsync(() => payload.curso_id ? api.courseQuestions(Number(payload.curso_id)) : Promise.resolve({ items: [] }), [payload.curso_id]);
   const qualified = (entities.data?.items || []).filter((item) => isConcludedStatus(item.status_qualificacao));
   const selectedEntity = qualified.find((item) => String(item.id) === String(payload.entidade_id));
@@ -500,23 +524,32 @@ function CursosPageV2({ user }: { user: User }) {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const course = (courses.data?.items || []).find((item) => String(item.id) === String(payload.curso_id));
-    const respostas = (courseQuestions.data?.items || []).map((question) => {
-      const resposta = answers[question.id] || questionOptions(question, "curso")[0]?.label || "";
-      const pontuacao = questionOptions(question, "curso").find((option) => option.label === resposta)?.points || 0;
-      return { pergunta_id: question.id, pergunta: question.pergunta, resposta, pontuacao };
-    });
-    const result = await api.createProtocol({
-      ...payload,
-      area: course?.area,
-      respostas,
-      pontuacao_curso: respostas.reduce((total, row) => total + Number(row.pontuacao || 0), 0),
-      solicitante_nome: user.nome,
-      solicitante_email: user.email,
-      usuario: user.usuario
-    });
-    setMessage(`${result.message} ${result.protocolo}`);
-    setPayload({});
+    setErrorMessage("");
+    setSubmitting(true);
+    try {
+      const course = (courses.data?.items || []).find((item) => String(item.id) === String(payload.curso_id));
+      const respostas = (courseQuestions.data?.items || []).map((question) => {
+        const resposta = answers[question.id] || questionOptions(question, "curso")[0]?.label || "";
+        const pontuacao = questionOptions(question, "curso").find((option) => option.label === resposta)?.points || 0;
+        return { pergunta_id: question.id, pergunta: question.pergunta, resposta, pontuacao };
+      });
+      const result = await api.createProtocol({
+        ...payload,
+        area: course?.area,
+        respostas,
+        pontuacao_curso: respostas.reduce((total, row) => total + Number(row.pontuacao || 0), 0),
+        solicitante_nome: user.nome,
+        solicitante_email: user.email,
+        usuario: user.usuario
+      });
+      setMessage(`${result.message} ${result.protocolo}`);
+      setPayload({});
+      setAnswers({});
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erro ao salvar demanda do curso.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -554,7 +587,8 @@ function CursosPageV2({ user }: { user: User }) {
         <label>Observação
           <textarea value={payload.observacao || ""} onChange={(e) => setPayload({ ...payload, observacao: e.target.value })} />
         </label>
-        <button disabled={!payload.entidade_id || !payload.curso_id}>Salvar e iniciar fluxo</button>
+        {errorMessage && <div className="alert error">{errorMessage}</div>}
+        <button disabled={!payload.entidade_id || !payload.curso_id || submitting}>{submitting ? "Salvando..." : "Salvar e iniciar fluxo"}</button>
       </form>
       {message && <div className="alert success">{message}</div>}
       {!qualified.length && <div className="empty">Finalize o Formulário Geral e o BPF de uma entidade para liberar cursos.</div>}

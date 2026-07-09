@@ -368,7 +368,7 @@ const supabaseApi = {
 
   async createProtocol(payload: Row) {
     const db = ensureSupabase();
-    const protocolo = `BA-${new Date().toISOString().replace(/\D/g, "").slice(0, 14)}`;
+    const protocolo = `BA-${new Date().toISOString().replace(/\D/g, "").slice(0, 17)}`;
     const data_mov = nowStr();
     const respostas = payload.respostas || [];
     const { error } = await db.from("protocolos").insert({
@@ -386,9 +386,29 @@ const supabaseApi = {
       data_atualizacao: data_mov,
       observacao: payload.observacao || ""
     });
-    throwDb(error);
-    await db.from("historico_fluxo").insert({ protocolo, status_anterior: "", status_novo: "Validação Administrativa", usuario: payload.usuario || "admin", data_movimento: data_mov, observacao: payload.observacao || "" });
-    if (respostas.length) await db.from("respostas_curso").insert(respostas.map((r: Row) => ({ ...r, protocolo, data_resposta: data_mov })));
+    if (error) throw new Error(`Erro ao criar protocolo do curso: ${error.message}`);
+    const { error: historyError } = await db.from("historico_fluxo").insert({
+      protocolo,
+      status_anterior: "",
+      status_novo: "Validação Administrativa",
+      usuario: payload.usuario || "admin",
+      data_movimento: data_mov,
+      observacao: payload.observacao || ""
+    });
+    if (historyError) throw new Error(`Erro ao registrar histórico inicial do protocolo: ${historyError.message}`);
+    if (respostas.length) {
+      const { error: answersError } = await db.from("respostas_curso").insert(
+        respostas.map((r: Row) => ({
+          protocolo,
+          pergunta_id: r.pergunta_id,
+          pergunta: r.pergunta,
+          resposta: r.resposta,
+          pontuacao: r.pontuacao,
+          data_resposta: data_mov
+        }))
+      );
+      if (answersError) throw new Error(`Erro ao salvar questionário do curso: ${answersError.message}`);
+    }
     return { message: "Protocolo criado.", protocolo };
   },
 
