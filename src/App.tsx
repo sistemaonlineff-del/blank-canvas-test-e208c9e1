@@ -83,7 +83,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
     setMessage("");
     try {
       const result = await api.register(usuario);
-      setMessage(result.message);
+      setMessage(result.tempPassword ? `${result.message} Senha temporária: ${result.tempPassword}` : result.message);
       setMode("login");
     } catch (err: any) {
       setError(err.message);
@@ -307,6 +307,8 @@ function QualificationQuestionForm({ kind, pending, onSaved }: { kind: "geral" |
   const questions = useAsync(() => api.questions(kind), [kind]);
   const [entidadeId, setEntidadeId] = useState<number | "">("");
   const [answers, setAnswers] = useState<Row>({});
+  const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     const next: Row = {};
@@ -314,19 +316,28 @@ function QualificationQuestionForm({ kind, pending, onSaved }: { kind: "geral" |
       next[question.id] = questionOptions(question, kind)[0]?.label || "";
     });
     setAnswers(next);
+    setSubmitError("");
   }, [questions.data, kind]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    setSubmitError("");
     if (!entidadeId) return;
-    const respostas = (questions.data?.items || []).map((question) => {
-      const resposta = answers[question.id] || questionOptions(question, kind)[0]?.label || "";
-      const pontuacao = questionOptions(question, kind).find((option) => option.label === resposta)?.points || 0;
-      return { questionario: question.questionario, pergunta_id: question.id, pergunta: question.pergunta, resposta, pontuacao };
-    });
-    const result = kind === "geral" ? await api.saveGeneral(Number(entidadeId), respostas) : await api.saveBpf(Number(entidadeId), respostas);
-    onSaved(`${result.message}${result.nivel ? ` Nível: ${result.nivel}. Pontuação: ${result.pontuacao}.` : ""}`);
-    setEntidadeId("");
+    setSubmitting(true);
+    try {
+      const respostas = (questions.data?.items || []).map((question) => {
+        const resposta = answers[question.id] || questionOptions(question, kind)[0]?.label || "";
+        const pontuacao = questionOptions(question, kind).find((option) => option.label === resposta)?.points || 0;
+        return { questionario: question.questionario, pergunta_id: question.id, pergunta: question.pergunta, resposta, pontuacao };
+      });
+      const result = kind === "geral" ? await api.saveGeneral(Number(entidadeId), respostas) : await api.saveBpf(Number(entidadeId), respostas);
+      onSaved(`${result.message}${result.nivel ? ` Nível: ${result.nivel}. Pontuação: ${result.pontuacao}.` : ""}`);
+      setEntidadeId("");
+    } catch (err: any) {
+      setSubmitError(err.message || "Erro ao salvar formulário.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   if (!pending.length) return <div className="empty">{kind === "geral" ? "Nenhuma entidade aguardando Formulario Geral." : "Nenhuma entidade aguardando BPF."}</div>;
@@ -343,6 +354,7 @@ function QualificationQuestionForm({ kind, pending, onSaved }: { kind: "geral" |
           {pending.map((item) => <option key={item.id} value={item.id}>{item.id} | {item.entidade}</option>)}
         </select>
       </label>
+      {submitError && <div className="alert error">{submitError}</div>}
       <div className="question-list">
         {Object.entries(groups).map(([group, rows]) => (
           <section className="question-section" key={group}>
@@ -358,7 +370,9 @@ function QualificationQuestionForm({ kind, pending, onSaved }: { kind: "geral" |
           </section>
         ))}
       </div>
-      <button disabled={!entidadeId}>{kind === "geral" ? "Salvar Formulario Geral e abrir BPF" : "Salvar BPF e concluir qualificação"}</button>
+      <button disabled={!entidadeId || submitting}>
+        {submitting ? "Salvando..." : kind === "geral" ? "Salvar Formulario Geral e abrir BPF" : "Salvar BPF e concluir qualificação"}
+      </button>
     </form>
   );
 }
@@ -368,15 +382,17 @@ function QualificacaoPage() {
   const [selected, setSelected] = useState<Row | null>(null);
   const [fields, setFields] = useState<Row>({});
   const [message, setMessage] = useState("");
-  const options = useAsync(api.qualificationOptions, [message]);
-  const pendingGeral = useAsync(() => api.pendingQualification("geral"), [message]);
-  const pendingBpf = useAsync(() => api.pendingQualification("bpf"), [message]);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const options = useAsync(api.qualificationOptions, [refreshKey]);
+  const pendingGeral = useAsync(() => api.pendingQualification("geral"), [refreshKey]);
+  const pendingBpf = useAsync(() => api.pendingQualification("bpf"), [refreshKey]);
 
   async function saveCadastro(event: FormEvent) {
     event.preventDefault();
     if (!selected) return;
     const result = await api.saveCadastro(selected.id, fields);
     setMessage(result.message);
+    setRefreshKey((value) => value + 1);
     setSelected(null);
     setFields({});
     setTab("geral");
@@ -407,8 +423,8 @@ function QualificacaoPage() {
           <button disabled={!selected}>Salvar dados cadastrais</button>
         </form>
       )}
-      {tab === "geral" && <QualificationQuestionForm kind="geral" pending={pendingGeral.data?.items || []} onSaved={(text) => { setMessage(text); setTab("bpf"); }} />}
-      {tab === "bpf" && <QualificationQuestionForm kind="bpf" pending={pendingBpf.data?.items || []} onSaved={setMessage} />}
+      {tab === "geral" && <QualificationQuestionForm kind="geral" pending={pendingGeral.data?.items || []} onSaved={(text) => { setMessage(text); setRefreshKey((value) => value + 1); setTab("bpf"); }} />}
+      {tab === "bpf" && <QualificationQuestionForm kind="bpf" pending={pendingBpf.data?.items || []} onSaved={(text) => { setMessage(text); setRefreshKey((value) => value + 1); }} />}
     </PageBlock>
   );
 }

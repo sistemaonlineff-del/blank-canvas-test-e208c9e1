@@ -106,7 +106,7 @@ const flaskApi = {
   login: (usuario: string, senha: string) =>
     request<{ user: User }>("/api/login", { method: "POST", body: JSON.stringify({ usuario, senha }) }),
   register: (email: string) =>
-    request<{ message: string }>("/api/register", { method: "POST", body: JSON.stringify({ email }) }),
+    request<{ message: string; tempPassword?: string }>("/api/register", { method: "POST", body: JSON.stringify({ email }) }),
   changePassword: (userId: number, senha: string) =>
     request<{ user: User; message: string }>("/api/change-password", { method: "POST", body: JSON.stringify({ user_id: userId, senha }) }),
   dashboard: () => request<any>("/api/dashboard"),
@@ -197,7 +197,10 @@ const supabaseApi = {
       data_criacao: data_solicitacao,
       erro: "E-mail real precisa de Edge Function/SMTP. Senha temporária registrada no sistema."
     });
-    return { message: "Usuário criado. A senha temporária foi registrada nas notificações do sistema." };
+    return {
+      message: "Usuário criado. A senha temporária foi registrada nas notificações do sistema.",
+      tempPassword: senha
+    };
   },
 
   async changePassword(userId: number, senha: string) {
