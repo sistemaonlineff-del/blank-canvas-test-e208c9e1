@@ -315,6 +315,13 @@ function normalizeTableRow(table: string, row: Row) {
   };
 }
 
+function hasMeaningfulRowData(table: string, row: Row) {
+  if (table === "usuarios") {
+    return Boolean(String(row.email || row.usuario || row.nome || "").trim());
+  }
+  return Object.values(row).some((value) => value !== "" && value != null);
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     ...options,
@@ -819,7 +826,7 @@ const supabaseApi = {
             `Seu acesso ao Sistema Bahia foi liberado.\n\nCargo: ${clean.perfil}\nUsuario: ${clean.email || clean.usuario}\n\nEntre com a senha definida para continuar.`
           );
         }
-      } else if (Object.values(clean).some((value) => value !== "" && value != null)) {
+      } else if (hasMeaningfulRowData(table, clean)) {
         const { error } = await db.from(table).insert(clean);
         throwDb(error);
       }

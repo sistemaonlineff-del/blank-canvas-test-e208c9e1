@@ -809,20 +809,30 @@ function ConfigPage() {
   const [table, setTable] = useState("cursos");
   const [rows, setRows] = useState<Row[]>([]);
   const [message, setMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    api.table(table).then((data) => setRows(data.items));
+    setErrorMessage("");
+    api.table(table)
+      .then((data) => setRows(data.items))
+      .catch((err: any) => setErrorMessage(err.message || "Erro ao carregar tabela."));
   }, [table, message]);
 
   async function save() {
-    await api.saveTable(table, rows);
-    setMessage("Tabela salva.");
+    setErrorMessage("");
+    try {
+      await api.saveTable(table, rows);
+      setMessage("Tabela salva.");
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erro ao salvar tabela.");
+    }
   }
 
   return (
     <PageBlock title="Configurações">
       <Tabs value={table} onChange={setTable as any} items={Object.entries(tableLabels)} />
       {message && <div className="alert success">{message}</div>}
+      {errorMessage && <div className="alert error">{errorMessage}</div>}
       {table === "usuarios" ? <UsersManagementTable rows={rows} onChange={setRows} /> : <EditableTable rows={rows} onChange={setRows} />}
       <button onClick={save}>Salvar tabela</button>
     </PageBlock>
