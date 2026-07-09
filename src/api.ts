@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from "docx";
 
 export type User = {
   id: number;
@@ -13,6 +14,20 @@ export type User = {
 };
 
 export type Row = Record<string, any>;
+
+export const CADASTRO_OPTIONS = {
+  anAtepAteg: ["AN", "ATEP/ATEG"],
+  coordenadorTipo: ["Coordenador de Negocio", "Coordenacao de Mercado"],
+  naturezaJuridica: ["Associacao", "Cooperativa", "Cooperativa Central"],
+  ativaDinamica: ["Ativa", "Dinamica"],
+  tipologiaBeneficiarios: [
+    "Agricultores Familiares",
+    "Comunidades Tradicionais",
+    "Assentados da Reforma Agraria",
+    "Extrativistas"
+  ],
+  comunidadesTradicionais: ["Quilombolas", "Indigenas", "Fundos e Fechos de Pastos", "Povos de Terreiro", "Outro"]
+} as const;
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.SUPABASE_URL;
 const supabaseAnonKey =
@@ -94,6 +109,83 @@ function isActive(row: Row) {
   return row.ativo == null || dbTrue(row.ativo);
 }
 
+function safeText(value: unknown) {
+  return String(value ?? "-").trim() || "-";
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function docParagraph(label: string, value: unknown) {
+  return new Paragraph({
+    spacing: { after: 120 },
+    children: [
+      new TextRun({ text: `${label}: `, bold: true }),
+      new TextRun({ text: safeText(value) })
+    ]
+  });
+}
+
+function docTable(rows: Array<[string, unknown, string, unknown]>) {
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: rows.map(
+      ([labelA, valueA, labelB, valueB]) =>
+        new TableRow({
+          children: [
+            new TableCell({ children: [docParagraph(labelA, valueA)] }),
+            new TableCell({ children: [docParagraph(labelB, valueB)] })
+          ]
+        })
+    )
+  });
+}
+
+async function buildProtocolOsDocument(protocol: Row) {
+  const doc = new Document({
+    sections: [
+      {
+        children: [
+          new Paragraph({
+            spacing: { after: 240 },
+            children: [new TextRun({ text: "ORDEM DE SERVICO", bold: true, size: 30 })]
+          }),
+          new Paragraph({
+            spacing: { after: 240 },
+            children: [new TextRun({ text: "Governanca e Qualificacao de Demandas - Bahia", bold: true })]
+          }),
+          docTable([
+            ["Protocolo", protocol.protocolo, "Status", protocol.status],
+            ["Entidade", protocol.entidade, "Curso", protocol.curso],
+            ["Area", protocol.area, "Nivel da entidade", protocol.nivel_entidade],
+            ["Solicitante", protocol.solicitante_nome, "E-mail", protocol.solicitante_email],
+            ["Data de abertura", protocol.data_abertura, "Data agendada", protocol.data_agendada],
+            ["Responsavel atual", protocol.responsavel_atual, "Etapa atual", protocol.etapa_atual]
+          ]),
+          new Paragraph({ spacing: { before: 240, after: 120 }, children: [new TextRun({ text: "DADOS DA ENTIDADE", bold: true })] }),
+          docTable([
+            ["CNPJ", protocol.cnpj, "Municipio", protocol.municipio_entidade],
+            ["Territorio", protocol.territorio_identidade, "Endereco", protocol.endereco],
+            ["Telefone", protocol.telefone, "Email responsavel", protocol.email_responsavel]
+          ]),
+          new Paragraph({ spacing: { before: 240, after: 120 }, children: [new TextRun({ text: "OBSERVACOES", bold: true })] }),
+          new Paragraph(safeText(protocol.observacao))
+        ]
+      }
+    ]
+  });
+
+  return Packer.toBlob(doc);
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     ...options,
@@ -147,6 +239,9 @@ const flaskApi = {
   cancelProtocol: (protocolo: string, usuario: string, observacao = "") =>
     request<any>(`/api/protocols/${protocolo}/cancel`, { method: "POST", body: JSON.stringify({ usuario, observacao }) }),
   forms: (protocolo: string) => request<any>(`/api/forms/${protocolo}`),
+  downloadOs: async (protocolo: string) => {
+    window.open(`/api/protocols/${protocolo}/os`, "_blank");
+  },
   table: (table: string) => request<{ items: Row[] }>(`/api/admin/table/${table}`),
   saveTable: (table: string, rows: Row[]) =>
     request<any>(`/api/admin/table/${table}`, { method: "POST", body: JSON.stringify({ rows }) })
@@ -463,6 +558,25 @@ const supabaseApi = {
     ]);
     throwDb(geral.error || bpf.error || curso.error || historico.error);
     return { geral: geral.data || [], bpf: bpf.data || [], curso: curso.data || [], historico: historico.data || [] };
+  },
+
+  async downloadOs(protocolo: string) {
+    const db = ensureSupabase();
+    const { data, error } = await db
+      .from("protocolos")
+      .select("*, entidades(*), cursos(*)")
+      .eq("protocolo", protocolo)
+      .single();
+    throwDb(error);
+    const protocol = {
+      ...data,
+      ...data.entidades,
+      curso: data.cursos?.curso,
+      entidade: data.entidades?.entidade,
+      nivel_entidade: data.entidades?.nivel
+    };
+    const blob = await buildProtocolOsDocument(protocol);
+    downloadBlob(blob, `${protocolo}_OS.docx`);
   },
 
   async table(table: string) {

@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Database, FileText, Home, LogOut, RefreshCw, Search, Settings, UserPlus } from "lucide-react";
-import { api, Row, User } from "./api";
+import { api, CADASTRO_OPTIONS, Row, User } from "./api";
 import logo1 from "../assets/logo_1.jpeg";
 import logo2 from "../assets/logo_2.jpeg";
 import "./styles.css";
@@ -419,6 +419,10 @@ function QualificacaoPage() {
     }
   }
 
+  const showAgenteNegocio = fields.an_atep_ateg === "AN";
+  const showAtepAteg = fields.an_atep_ateg === "ATEP/ATEG";
+  const showComunidadeTradicional = fields.tipologia_beneficiarios === "Comunidades Tradicionais";
+
   return (
     <PageBlock title="Qualificar Nova Entidade">
       <Tabs value={tab} onChange={setTab} items={[
@@ -436,11 +440,77 @@ function QualificacaoPage() {
             {(options.data?.items || []).map((item) => <option key={item.id} value={item.id}>{item.id} | {item.entidade}</option>)}
           </select>
           <div className="form-grid">
-            {["cnpj", "municipio_entidade", "territorio_identidade", "email_responsavel", "telefone", "endereco", "certificacao", "licenca_ambiental", "numero_convenio", "natureza_juridica"].map((field) => (
-              <label key={field}>{field.replace(/_/g, " ")}
-                <input value={fields[field] || ""} onChange={(e) => setFields({ ...fields, [field]: e.target.value })} />
+            <label>Número do Convênio
+              <input value={fields.numero_convenio || ""} onChange={(e) => setFields({ ...fields, numero_convenio: e.target.value })} />
+            </label>
+            <label>AN ou ATEP / ATEG
+              <select value={fields.an_atep_ateg || ""} onChange={(e) => setFields({ ...fields, an_atep_ateg: e.target.value, agente_negocio: "", atep: "", nome_ateg: "" })}>
+                <option value="">Selecionar</option>
+                {CADASTRO_OPTIONS.anAtepAteg.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+            <label>Coordenador de Negócio / Coordenação de Mercado
+              <select value={fields.coordenador_tipo || ""} onChange={(e) => setFields({ ...fields, coordenador_tipo: e.target.value })}>
+                <option value="">Selecionar</option>
+                {CADASTRO_OPTIONS.coordenadorTipo.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+            {showAgenteNegocio && (
+              <label>Nome do Agente de Negócio
+                <input value={fields.agente_negocio || ""} onChange={(e) => setFields({ ...fields, agente_negocio: e.target.value })} />
               </label>
-            ))}
+            )}
+            {showAtepAteg && (
+              <label>Nome ATEP
+                <input value={fields.atep || ""} onChange={(e) => setFields({ ...fields, atep: e.target.value })} />
+              </label>
+            )}
+            {showAtepAteg && (
+              <label>Nome ATEG
+                <input value={fields.nome_ateg || ""} onChange={(e) => setFields({ ...fields, nome_ateg: e.target.value })} />
+              </label>
+            )}
+            <label>Nome do Coordenador
+              <input value={fields.nome_coordenador || ""} onChange={(e) => setFields({ ...fields, nome_coordenador: e.target.value })} />
+            </label>
+            <label>Nº CNPJ
+              <input value={fields.cnpj || ""} onChange={(e) => setFields({ ...fields, cnpj: e.target.value })} />
+            </label>
+            <label>Natureza Jurídica da Entidade
+              <select value={fields.natureza_juridica || ""} onChange={(e) => setFields({ ...fields, natureza_juridica: e.target.value })}>
+                <option value="">Selecionar</option>
+                {CADASTRO_OPTIONS.naturezaJuridica.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+            <label>Nº DAP ou CAF
+              <input value={fields.dap_caf || ""} onChange={(e) => setFields({ ...fields, dap_caf: e.target.value })} />
+            </label>
+            <label>Território de Identidade
+              <input value={fields.territorio_identidade || ""} onChange={(e) => setFields({ ...fields, territorio_identidade: e.target.value })} />
+            </label>
+            <label>Email
+              <input value={fields.email_responsavel || ""} onChange={(e) => setFields({ ...fields, email_responsavel: e.target.value })} />
+            </label>
+            <label>Tipologia de Beneficiários
+              <select value={fields.tipologia_beneficiarios || ""} onChange={(e) => setFields({ ...fields, tipologia_beneficiarios: e.target.value, comunidade_tradicional: "" })}>
+                <option value="">Selecionar</option>
+                {CADASTRO_OPTIONS.tipologiaBeneficiarios.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+            {showComunidadeTradicional && (
+              <label>Comunidades Tradicionais
+                <select value={fields.comunidade_tradicional || ""} onChange={(e) => setFields({ ...fields, comunidade_tradicional: e.target.value })}>
+                  <option value="">Selecionar</option>
+                  {CADASTRO_OPTIONS.comunidadesTradicionais.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
+            )}
+            <label>Ativa ou Dinâmica
+              <select value={fields.ativa_dinamica || ""} onChange={(e) => setFields({ ...fields, ativa_dinamica: e.target.value })}>
+                <option value="">Selecionar</option>
+                {CADASTRO_OPTIONS.ativaDinamica.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
           </div>
           <button disabled={!selected || savingCadastro}>{savingCadastro ? "Salvando..." : "Salvar dados cadastrais"}</button>
         </form>
@@ -820,23 +890,47 @@ function ResponseSection({ title, rows, empty }: { title: string; rows: Row[]; e
 function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCancel }: { row: Row | undefined; forms: any; approval?: boolean; user?: User; onAdvance?: (observacao: string, dataAgendada: string) => Promise<void>; onCancel?: (observacao: string) => Promise<void> }) {
   const [observacao, setObservacao] = useState("");
   const [dataAgendada, setDataAgendada] = useState("");
+  const [osError, setOsError] = useState("");
+  const [downloadingOs, setDownloadingOs] = useState(false);
   if (!row) return <div className="empty">Selecione um protocolo para ver os detalhes.</div>;
-  const finalizado = ["Finalizado", "Cancelado", "Reprovado"].includes(String(row.status || ""));
-  const osUrl = `/api/protocols/${row.protocolo}/os`;
+  const currentRow = row;
+  const finalizado = ["Finalizado", "Cancelado", "Reprovado"].includes(String(currentRow.status || ""));
+  const statusKey = String(currentRow.status || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const canDownloadOs = ["agendamento", "execucao", "finalizado"].includes(statusKey);
+
+  async function downloadOs() {
+    setOsError("");
+    setDownloadingOs(true);
+    try {
+      await api.downloadOs(String(currentRow.protocolo));
+    } catch (err: any) {
+      setOsError(err.message || "Erro ao gerar a OS.");
+    } finally {
+      setDownloadingOs(false);
+    }
+  }
+
   return (
     <section className="detail-panel">
       <div className="detail-header">
         <div>
-          <h3>{row.protocolo}</h3>
-          <p>{row.entidade || "-"} · {row.curso || "-"} · {row.status || "-"}</p>
+          <h3>{currentRow.protocolo}</h3>
+          <p>{currentRow.entidade || "-"} · {currentRow.curso || "-"} · {currentRow.status || "-"}</p>
         </div>
-        {row.os_preenchida_path ? <a className="download-button" href={osUrl}>Baixar OS preenchida</a> : <span className="muted">OS será gerada ao enviar para Agendamento.</span>}
+        {canDownloadOs ? (
+          <button className="download-button" onClick={downloadOs} type="button" disabled={downloadingOs}>
+            {downloadingOs ? "Gerando OS..." : "Baixar OS preenchida"}
+          </button>
+        ) : (
+          <span className="muted">OS será gerada ao enviar para Agendamento.</span>
+        )}
       </div>
+      {osError && <div className="alert error">{osError}</div>}
       <div className="detail-grid">
-        <Metric title="Área" value={row.area || "-"} />
-        <Metric title="Responsável" value={row.responsavel_atual || row.etapa_atual || "-"} />
-        <Metric title="Agendamento" value={row.data_agendada || "-"} />
-        <Metric title="Pontuação curso" value={row.pontuacao_curso ?? 0} />
+        <Metric title="Área" value={currentRow.area || "-"} />
+        <Metric title="Responsável" value={currentRow.responsavel_atual || currentRow.etapa_atual || "-"} />
+        <Metric title="Agendamento" value={currentRow.data_agendada || "-"} />
+        <Metric title="Pontuação curso" value={currentRow.pontuacao_curso ?? 0} />
       </div>
       <h3>Histórico de movimentação</h3>
       <DataTable rows={forms?.historico || []} empty="Sem histórico." />
@@ -845,7 +939,7 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
       <ResponseSection title="Formulario do Curso" rows={forms?.curso || []} empty="Sem respostas do curso." />
       {approval && finalizado && <div className="alert error">Este protocolo esta encerrado e nao permite novas acoes.</div>}      {approval && !finalizado && (
         <div className="approval-actions">
-          {String(row.status || "") === "Agendamento" && (
+          {String(currentRow.status || "") === "Agendamento" && (
             <label>Data para iniciar execução
               <input type="datetime-local" value={dataAgendada} onChange={(e) => setDataAgendada(e.target.value)} />
             </label>
@@ -854,8 +948,8 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
             <textarea value={observacao} onChange={(e) => setObservacao(e.target.value)} />
           </label>
           <div className="action-row">
-            <button onClick={() => onAdvance?.(observacao, dataAgendada)} disabled={!user || (String(row.status || "") === "Agendamento" && !dataAgendada)}>
-              {actionLabel(String(row.status || ""))}
+            <button onClick={() => onAdvance?.(observacao, dataAgendada)} disabled={!user || (String(currentRow.status || "") === "Agendamento" && !dataAgendada)}>
+              {actionLabel(String(currentRow.status || ""))}
             </button>
             <button className="danger" onClick={() => onCancel?.(observacao)} disabled={!user}>Cancelar</button>
           </div>
