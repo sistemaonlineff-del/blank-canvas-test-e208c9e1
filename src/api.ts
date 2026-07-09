@@ -302,22 +302,24 @@ const supabaseApi = {
     const db = ensureSupabase();
     const pontos = respostas.reduce((sum, row) => sum + Number(row.pontuacao || 0), 0);
     const nivel = levelByPoints(pontos);
-    await db.from("respostas_entidade").delete().eq("entidade_id", entidade_id);
+    const { error: deleteError } = await db.from("respostas_entidade").delete().eq("entidade_id", entidade_id);
+    if (deleteError) throw new Error(`Erro ao limpar respostas do Formulario Geral: ${deleteError.message}`);
     const { error: insertError } = await db.from("respostas_entidade").insert(respostas.map((r) => ({ ...r, entidade_id, data_resposta: nowStr() })));
-    throwDb(insertError);
+    if (insertError) throw new Error(`Erro ao salvar respostas do Formulario Geral: ${insertError.message}`);
     const { error } = await db.from("entidades").update({ status_qualificacao: "BPF pendente", nivel, pontuacao: pontos, pontuacao_q1: pontos }).eq("id", entidade_id);
-    throwDb(error);
+    if (error) throw new Error(`Erro ao atualizar status da entidade apos o Formulario Geral: ${error.message}`);
     return { message: "Formulário Geral salvo.", nivel, pontuacao: pontos };
   },
 
   async saveBpf(entidade_id: number, respostas: Row[]) {
     const db = ensureSupabase();
     const pontos = respostas.reduce((sum, row) => sum + Number(row.pontuacao || 0), 0);
-    await db.from("respostas_bpf").delete().eq("entidade_id", entidade_id);
+    const { error: deleteError } = await db.from("respostas_bpf").delete().eq("entidade_id", entidade_id);
+    if (deleteError) throw new Error(`Erro ao limpar respostas do BPF: ${deleteError.message}`);
     const { error: insertError } = await db.from("respostas_bpf").insert(respostas.map((r) => ({ ...r, entidade_id, data_resposta: nowStr() })));
-    throwDb(insertError);
-    const { error } = await db.from("entidades").update({ status_qualificacao: "Concluída" }).eq("id", entidade_id);
-    throwDb(error);
+    if (insertError) throw new Error(`Erro ao salvar respostas do BPF: ${insertError.message}`);
+    const { error } = await db.from("entidades").update({ status_qualificacao: "Concluída", pontuacao_q2: pontos }).eq("id", entidade_id);
+    if (error) throw new Error(`Erro ao concluir a qualificação da entidade apos o BPF: ${error.message}`);
     return { message: "BPF salvo. Entidade liberada para cursos.", pontuacao: pontos };
   },
 

@@ -1,6 +1,8 @@
 import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Database, FileText, Home, LogOut, RefreshCw, Search, Settings, UserPlus } from "lucide-react";
 import { api, Row, User } from "./api";
+import logo1 from "../assets/logo_1.jpeg";
+import logo2 from "../assets/logo_2.jpeg";
 import "./styles.css";
 
 type Page = "home" | "qualificacao" | "cursos" | "status" | "aprovacoes" | "entidades" | "config";
@@ -158,8 +160,8 @@ function Layout({ user, page, setPage, logout, children }: any) {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <img src="/assets/logo_1.jpeg" />
-          <img src="/assets/logo_2.jpeg" />
+          <img src={logo1} alt="Logo CAR" />
+          <img src={logo2} alt="Logo Governo da Bahia" />
           <strong>Sistema Bahia</strong>
           <span>Governança & Qualificação</span>
         </div>

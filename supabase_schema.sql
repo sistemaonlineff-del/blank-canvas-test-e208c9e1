@@ -213,3 +213,18 @@ create index if not exists idx_entidades_status_ativo on entidades (status_quali
 create index if not exists idx_protocolos_status on protocolos (status);
 create index if not exists idx_historico_protocolo on historico_fluxo (protocolo);
 
+alter table usuarios disable row level security;
+alter table entidades disable row level security;
+alter table cursos disable row level security;
+alter table perguntas_qualificacao disable row level security;
+alter table perguntas_bpf disable row level security;
+alter table perguntas_curso disable row level security;
+alter table alternativas_curso disable row level security;
+alter table protocolos disable row level security;
+alter table respostas_entidade disable row level security;
+alter table respostas_bpf disable row level security;
+alter table respostas_curso disable row level security;
+alter table owners_area disable row level security;
+alter table historico_fluxo disable row level security;
+alter table notificacoes disable row level security;
+
