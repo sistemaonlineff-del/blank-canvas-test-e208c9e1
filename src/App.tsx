@@ -846,11 +846,31 @@ function UsersManagementTable({ rows, onChange }: { rows: Row[]; onChange: (rows
     onChange(next);
   }
 
-  function statusLabel(row: Row) {
-    if (!row.id) return "Novo";
+  async function hashValue(value: string) {
+    const buffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+    return Array.from(new Uint8Array(buffer)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  function tempPassword() {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    return Array.from({ length: 10 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+  }
+
+  function statusValue(row: Row) {
     if (String(row.ativo) === "false" || row.ativo === false || row.ativo === 0) return "Inativo";
     if (row.acesso_pendente || !row.perfil) return "Pendente";
     return "Ativo";
+  }
+
+  async function resetPassword(index: number) {
+    const senha = tempPassword();
+    const senha_hash = await hashValue(senha);
+    update(index, {
+      senha_hash,
+      senha_temporaria: true,
+      trocar_senha_obrigatorio: true,
+      generated_temp_password: senha
+    });
   }
 
   return (
@@ -860,19 +880,36 @@ function UsersManagementTable({ rows, onChange }: { rows: Row[]; onChange: (rows
           <tr>
             <th>E-mail</th>
             <th>Nome</th>
+            <th>Redefinir senha</th>
             <th>Status</th>
             <th>Cargo</th>
-            <th>Ativo</th>
-            <th>Pendente</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {[...rows, { email: "", nome: "", perfil: "", ativo: true, acesso_pendente: true }].map((row, index) => (
+          {rows.map((row, index) => (
             <tr key={index}>
               <td><input value={row.email ?? row.usuario ?? ""} onChange={(e) => update(index, { email: e.target.value, usuario: e.target.value })} /></td>
               <td><input value={row.nome ?? ""} onChange={(e) => update(index, { nome: e.target.value })} /></td>
-              <td>{statusLabel(row)}</td>
+              <td>
+                <div className="password-reset-cell">
+                  <button className="icon" type="button" onClick={() => resetPassword(index)}>Gerar senha</button>
+                  <span className="temp-password">{row.generated_temp_password || "-"}</span>
+                </div>
+              </td>
+              <td>
+                <select
+                  value={statusValue(row)}
+                  onChange={(e) => update(index, {
+                    ativo: e.target.value !== "Inativo",
+                    acesso_pendente: e.target.value === "Pendente"
+                  })}
+                >
+                  <option value="Ativo">Ativo</option>
+                  <option value="Inativo">Inativo</option>
+                  <option value="Pendente">Pendente</option>
+                </select>
+              </td>
               <td>
                 <select
                   value={row.perfil ?? ""}
@@ -881,20 +918,6 @@ function UsersManagementTable({ rows, onChange }: { rows: Row[]; onChange: (rows
                   <option value="">Selecionar cargo</option>
                   {USER_ROLE_OPTIONS.map((role) => <option key={role} value={role}>{role}</option>)}
                 </select>
-              </td>
-              <td>
-                <input
-                  type="checkbox"
-                  checked={Boolean(row.ativo ?? true)}
-                  onChange={(e) => update(index, { ativo: e.target.checked })}
-                />
-              </td>
-              <td>
-                <input
-                  type="checkbox"
-                  checked={Boolean(row.acesso_pendente ?? !row.perfil)}
-                  onChange={(e) => update(index, { acesso_pendente: e.target.checked })}
-                />
               </td>
               <td><button className="icon" onClick={() => onChange(rows.filter((_, i) => i !== index))}>Remover</button></td>
             </tr>

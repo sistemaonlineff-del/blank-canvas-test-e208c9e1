@@ -305,7 +305,7 @@ async function notifyRoleGroup(
 
 function normalizeTableRow(table: string, row: Row) {
   if (table !== "usuarios") return row;
-  return {
+  const normalized: Row = {
     ...row,
     perfil: row.perfil || null,
     ativo: dbTrue(row.ativo),
@@ -313,6 +313,8 @@ function normalizeTableRow(table: string, row: Row) {
     senha_temporaria: dbTrue(row.senha_temporaria),
     trocar_senha_obrigatorio: dbTrue(row.trocar_senha_obrigatorio)
   };
+  delete normalized.generated_temp_password;
+  return normalized;
 }
 
 function hasMeaningfulRowData(table: string, row: Row) {
