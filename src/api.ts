@@ -269,12 +269,81 @@ async function queueNotifications(
     destinatario,
     assunto,
     corpo,
-    enviado: 0,
+    enviado: false,
     data_criacao: nowStr(),
     erro: "Fila registrada. Configure SMTP/Edge Function para envio automatico real."
   }));
   const { error } = await db.from("notificacoes").insert(payload);
   throwDb(error);
+}
+
+function buildApprovalNotification(row: Row, nextStatus: string, nextStage: string, observacao = "", cancelled = false) {
+  const assunto = cancelled
+    ? `Atencao: protocolo ${safeText(row.protocolo)} foi cancelado`
+    : "Atencao: chegou uma nova demanda para sua area";
+  const corpo = cancelled
+    ? [
+        "Atencao,",
+        "",
+        "O fluxo abaixo foi cancelado no Sistema Bahia.",
+        "",
+        `Numero do protocolo: ${safeText(row.protocolo)}`,
+        `Entidade: ${safeText(row.entidade)}`,
+        `CNPJ: ${safeText(row.cnpj)}`,
+        `Area: ${safeText(row.area)}`,
+        `Pessoa que iniciou o fluxo: ${safeText(row.solicitante_nome)}`,
+        `E-mail do solicitante: ${safeText(row.solicitante_email)}`,
+        `Observacao: ${safeText(observacao || "-")}`
+      ].join("\n")
+    : [
+        "Atencao,",
+        "",
+        "Chegou uma nova demanda aguardando sua atuacao no Sistema Bahia.",
+        "",
+        `Numero do protocolo: ${safeText(row.protocolo)}`,
+        `Entidade: ${safeText(row.entidade)}`,
+        `CNPJ: ${safeText(row.cnpj)}`,
+        `Curso: ${safeText(row.curso)}`,
+        `Area responsavel: ${safeText(row.area)}`,
+        `Etapa atual: ${safeText(nextStage)}`,
+        `Status do fluxo: ${safeText(nextStatus)}`,
+        `Pessoa que iniciou o fluxo: ${safeText(row.solicitante_nome)}`,
+        `E-mail do solicitante: ${safeText(row.solicitante_email)}`,
+        `Observacao: ${safeText(observacao || "-")}`
+      ].join("\n");
+  return { assunto, corpo };
+}
+
+async function fetchNotificationRecipients(db: ReturnType<typeof ensureSupabase>, row: Row, cancelled = false) {
+  const area = String(row.area || "").trim();
+  const recipients = new Set<string>();
+  if (row.solicitante_email) recipients.add(String(row.solicitante_email).trim().toLowerCase());
+
+  if (area) {
+    const { data: owners, error: ownersError } = await db
+      .from("owners_area")
+      .select("email")
+      .eq("area", area)
+      .eq("ativo", true);
+    throwDb(ownersError);
+    (owners || []).forEach((owner: Row) => {
+      const email = String(owner.email || "").trim().toLowerCase();
+      if (email) recipients.add(email);
+    });
+  }
+
+  const { data: managers, error: managersError } = await db
+    .from("usuarios")
+    .select("email,usuario")
+    .eq("ativo", true)
+    .in("perfil", [ROLE_ADMIN, ROLE_MODERATOR]);
+  throwDb(managersError);
+  (managers || []).forEach((user: Row) => {
+    const email = String(user.email || user.usuario || "").trim().toLowerCase();
+    if (email) recipients.add(email);
+  });
+
+  return Array.from(recipients);
 }
 
 function protocolSummary(row: Row) {
@@ -588,11 +657,91 @@ const supabaseApi = {
   },
 
   async advanceProtocol(protocolo: string, usuario: string, observacao = "", data_agendada = "") {
-    return flaskApi.advanceProtocol(protocolo, usuario, observacao, data_agendada);
+    const db = ensureSupabase();
+    const { data: protocol, error } = await db
+      .from("protocolos")
+      .select("*, entidades(entidade,cnpj,nivel), cursos(curso)")
+      .eq("protocolo", protocolo)
+      .single();
+    throwDb(error);
+    const row = {
+      ...protocol,
+      entidade: (protocol as any).entidades?.entidade,
+      cnpj: (protocol as any).entidades?.cnpj,
+      nivel_entidade: (protocol as any).entidades?.nivel,
+      curso: (protocol as any).cursos?.curso
+    } as Row;
+    const [novoStatus, novaEtapa] = nextStep(String(row.status || ""));
+    const dataMov = nowStr();
+    const updatePayload: Row = {
+      status: novoStatus,
+      etapa_atual: novaEtapa,
+      responsavel_atual: novaEtapa,
+      data_atualizacao: dataMov
+    };
+    if (normalizeStatusKey(row.status) === "agendamento") {
+      updatePayload.data_agendada = data_agendada || row.data_agendada || "";
+    }
+    const { error: updateError } = await db.from("protocolos").update(updatePayload).eq("protocolo", protocolo);
+    throwDb(updateError);
+    const { error: historyError } = await db.from("historico_fluxo").insert({
+      protocolo,
+      status_anterior: row.status,
+      status_novo: novoStatus,
+      usuario,
+      data_movimento: dataMov,
+      observacao
+    });
+    throwDb(historyError);
+    const recipients = await fetchNotificationRecipients(db, row, false);
+    const { assunto, corpo } = buildApprovalNotification(row, novoStatus, novaEtapa, observacao, false);
+    await queueNotifications(db, protocolo, recipients, assunto, corpo);
+    return { message: "Fluxo atualizado.", status: novoStatus };
   },
 
   async cancelProtocol(protocolo: string, usuario: string, observacao = "") {
-    return flaskApi.cancelProtocol(protocolo, usuario, observacao);
+    const db = ensureSupabase();
+    const { data: protocol, error } = await db
+      .from("protocolos")
+      .select("*, entidades(entidade,cnpj,nivel), cursos(curso)")
+      .eq("protocolo", protocolo)
+      .single();
+    throwDb(error);
+    const row = {
+      ...protocol,
+      entidade: (protocol as any).entidades?.entidade,
+      cnpj: (protocol as any).entidades?.cnpj,
+      nivel_entidade: (protocol as any).entidades?.nivel,
+      curso: (protocol as any).cursos?.curso
+    } as Row;
+    const statusKey = normalizeStatusKey(row.status);
+    if ([normalizeStatusKey(STATUS_CANCELADO), normalizeStatusKey(STATUS_REPROVADO), normalizeStatusKey(STATUS_FINALIZADO)].includes(statusKey)) {
+      throw new Error("Este protocolo ja esta encerrado.");
+    }
+    const dataMov = nowStr();
+    const { error: updateError } = await db
+      .from("protocolos")
+      .update({
+        status: STATUS_CANCELADO,
+        etapa_atual: STATUS_CANCELADO,
+        responsavel_atual: STATUS_CANCELADO,
+        data_atualizacao: dataMov
+      })
+      .eq("protocolo", protocolo);
+    throwDb(updateError);
+    const { error: historyError } = await db.from("historico_fluxo").insert({
+      protocolo,
+      status_anterior: row.status,
+      status_novo: STATUS_CANCELADO,
+      usuario,
+      data_movimento: dataMov,
+      observacao
+    });
+    throwDb(historyError);
+    const recipients = await fetchNotificationRecipients(db, row, true);
+    const { assunto, corpo } = buildApprovalNotification(row, STATUS_CANCELADO, STATUS_CANCELADO, observacao, true);
+    await queueNotifications(db, protocolo, recipients, assunto, corpo);
+    return { message: "Protocolo cancelado.", status: STATUS_CANCELADO };
   },
 
   async forms(protocolo: string) {
