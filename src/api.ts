@@ -319,29 +319,60 @@ async function fetchNotificationRecipients(db: ReturnType<typeof ensureSupabase>
   const recipients = new Set<string>();
   if (row.solicitante_email) recipients.add(String(row.solicitante_email).trim().toLowerCase());
 
-  if (area) {
-    const { data: owners, error: ownersError } = await db
-      .from("owners_area")
-      .select("email")
-      .eq("area", area)
-      .eq("ativo", true);
-    throwDb(ownersError);
-    (owners || []).forEach((owner: Row) => {
-      const email = String(owner.email || "").trim().toLowerCase();
+  if (cancelled) {
+    if (area) {
+      const { data: owners, error: ownersError } = await db
+        .from("owners_area")
+        .select("email")
+        .eq("area", area)
+        .eq("ativo", true);
+      throwDb(ownersError);
+      (owners || []).forEach((owner: Row) => {
+        const email = String(owner.email || "").trim().toLowerCase();
+        if (email) recipients.add(email);
+      });
+    }
+    return Array.from(recipients);
+  }
+
+  return Array.from(recipients);
+}
+
+async function fetchStageRecipients(
+  db: ReturnType<typeof ensureSupabase>,
+  row: Row,
+  nextStatus: string,
+  nextStage: string
+) {
+  const recipients = new Set<string>();
+  if (row.solicitante_email) recipients.add(String(row.solicitante_email).trim().toLowerCase());
+
+  const stageRoles = rolesForStatus(nextStatus).filter(
+    (role) => ![ROLE_ADMIN, ROLE_MODERATOR].includes(role)
+  );
+
+  if (stageRoles.length) {
+    const users = await fetchActiveUsersByRoles(db, stageRoles);
+    users.forEach((user: Row) => {
+      const email = String(user.email || user.usuario || "").trim().toLowerCase();
       if (email) recipients.add(email);
     });
   }
 
-  const { data: managers, error: managersError } = await db
-    .from("usuarios")
-    .select("email,usuario")
-    .eq("ativo", true)
-    .in("perfil", [ROLE_ADMIN, ROLE_MODERATOR]);
-  throwDb(managersError);
-  (managers || []).forEach((user: Row) => {
-    const email = String(user.email || user.usuario || "").trim().toLowerCase();
-    if (email) recipients.add(email);
-  });
+  if (!stageRoles.length && String(nextStage || "").trim()) {
+    const fallbackRole = String(nextStage || "").trim().toLowerCase();
+    const { data: users, error } = await db
+      .from("usuarios")
+      .select("email,usuario,perfil")
+      .eq("ativo", true);
+    throwDb(error);
+    (users || [])
+      .filter((user: Row) => normalizeRoleKey(user.perfil) === fallbackRole)
+      .forEach((user: Row) => {
+        const email = String(user.email || user.usuario || "").trim().toLowerCase();
+        if (email) recipients.add(email);
+      });
+  }
 
   return Array.from(recipients);
 }
@@ -693,7 +724,7 @@ const supabaseApi = {
       observacao
     });
     throwDb(historyError);
-    const recipients = await fetchNotificationRecipients(db, row, false);
+    const recipients = await fetchStageRecipients(db, row, novoStatus, novaEtapa);
     const { assunto, corpo } = buildApprovalNotification(row, novoStatus, novaEtapa, observacao, false);
     await queueNotifications(db, protocolo, recipients, assunto, corpo);
     return { message: "Fluxo atualizado.", status: novoStatus };
