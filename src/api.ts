@@ -43,6 +43,9 @@ const supabaseAnonKey =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   import.meta.env.SUPABASE_ANON_KEY ||
   import.meta.env.SUPABASE_PUBLISHABLE_KEY;
+const apiBaseUrl = String(import.meta.env.VITE_API_BASE_URL || "")
+  .trim()
+  .replace(/\/+$/, "");
 const useSupabase = Boolean(supabaseUrl && supabaseAnonKey);
 const supabase = useSupabase ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
@@ -325,7 +328,8 @@ function hasMeaningfulRowData(table: string, row: Row) {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(path, {
+  const url = /^https?:\/\//i.test(path) ? path : `${apiBaseUrl}${path}`;
+  const res = await fetch(url, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -378,7 +382,8 @@ const flaskApi = {
     request<any>(`/api/protocols/${protocolo}/cancel`, { method: "POST", body: JSON.stringify({ usuario, observacao }) }),
   forms: (protocolo: string) => request<any>(`/api/forms/${protocolo}`),
   downloadOs: async (protocolo: string) => {
-    window.open(`/api/protocols/${protocolo}/os`, "_blank");
+    const url = `${apiBaseUrl}/api/protocols/${protocolo}/os`;
+    window.open(url, "_blank");
   },
   processNotifications: (limit = 50) =>
     request<{ message: string; total: number; sent: number; failed: number; items: Row[] }>(

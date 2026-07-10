@@ -45,6 +45,28 @@ Observacoes sobre SMTP:
 - `EMAIL_PROVIDER=smtp` deixa o Flask usar SMTP como caminho principal.
 - Para porta `587`, o mais comum e `SMTP_TLS=1` com `SMTP_SSL=0`.
 - Para porta `465`, normalmente use `SMTP_SSL=1` com `SMTP_TLS=0`.
+
+## Lovable + Supabase sem clique manual
+
+Se voce quiser manter a interface na Lovable e ainda assim disparar email automatico
+quando a etapa mudar, use o caminho do Supabase:
+
+1. Crie a Edge Function `send-notification` usando o arquivo
+   `supabase/functions/send-notification/index.ts`.
+2. Defina os secrets SMTP no Supabase:
+   - `SMTP_HOST`
+   - `SMTP_PORT`
+   - `SMTP_USER`
+   - `SMTP_PASSWORD`
+   - `SMTP_FROM`
+   - `SMTP_TLS`
+   - `SMTP_SSL`
+3. Desative a verificacao JWT dessa funcao.
+4. Rode o SQL de `supabase_notification_webhook.sql`, trocando
+   `YOUR_PROJECT_REF` pelo Project Ref do seu Supabase.
+
+Assim, toda nova linha inserida em `public.notificacoes` dispara o envio real do email
+automaticamente, sem precisar clicar em `Processar fila de notificacoes`.
 - Se usar Gmail, prefira `App Password` em vez da senha normal da conta.
 - Se quiser manter Resend como contingencia, tambem pode configurar `RESEND_API_KEY` e `MAIL_FROM`.
 

@@ -26,6 +26,12 @@ STORAGE_DIR = APP_DIR / "storage"
 OS_UPLOAD_DIR = STORAGE_DIR / "os"
 DATABASE_URL = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
 USE_POSTGRES = bool(DATABASE_URL)
+APP_URL = (
+    os.getenv("APP_URL")
+    or os.getenv("FRONTEND_URL")
+    or os.getenv("LOVABLE_APP_URL")
+    or ""
+).strip()
 
 NIVEIS = ["Básico", "Intermediário", "Avançado"]
 AREAS_CURSO = ["CIMATEC", "SEBRAE"]
@@ -1311,6 +1317,72 @@ def save_table(table: str):
             placeholders = ", ".join("?" for _ in cols)
             execute(f"INSERT INTO {real_table}({', '.join(cols)}) VALUES({placeholders})", tuple(row[c] for c in cols))
     return jsonify({"message": "Tabela salva."})
+
+
+def build_protocol_notification(protocolo: str, area: str, etapa: str, status: str, observacao: str = "", cancelled: bool = False) -> tuple[str, str]:
+    row = fetch_one(
+        """SELECT p.protocolo, p.area, p.status, p.etapa_atual, p.solicitante_nome, p.solicitante_email,
+                  e.entidade, e.cnpj, c.curso
+           FROM protocolos p
+           LEFT JOIN entidades e ON e.id=p.entidade_id
+           LEFT JOIN cursos c ON c.id=p.curso_id
+           WHERE p.protocolo=? LIMIT 1""",
+        (protocolo,),
+    ) or {}
+    entidade = row.get("entidade") or "-"
+    cnpj = row.get("cnpj") or "-"
+    curso = row.get("curso") or "-"
+    solicitante_nome = row.get("solicitante_nome") or "-"
+    solicitante_mail = row.get("solicitante_email") or "-"
+    area_nome = row.get("area") or area or "-"
+    etapa_nome = etapa or row.get("etapa_atual") or "-"
+    status_nome = status or row.get("status") or "-"
+    acesso = APP_URL or "Informe o link do app na variavel APP_URL."
+
+    if cancelled:
+        assunto = f"Atencao: protocolo {protocolo} foi cancelado"
+        corpo = (
+            "Atencao,\n\n"
+            "O fluxo abaixo foi cancelado no Sistema Bahia.\n\n"
+            f"Numero do protocolo: {protocolo}\n"
+            f"Entidade: {entidade}\n"
+            f"CNPJ: {cnpj}\n"
+            f"Area: {area_nome}\n"
+            f"Pessoa que iniciou o fluxo: {solicitante_nome}\n"
+            f"E-mail do solicitante: {solicitante_mail}\n"
+            f"Observacao: {observacao or '-'}\n\n"
+            f"Acesse o sistema: {acesso}\n"
+        )
+        return assunto, corpo
+
+    assunto = "Atencao: chegou uma nova demanda para sua area"
+    corpo = (
+        "Atencao,\n\n"
+        "Chegou uma nova demanda aguardando sua atuacao no Sistema Bahia.\n\n"
+        f"Numero do protocolo: {protocolo}\n"
+        f"Entidade: {entidade}\n"
+        f"CNPJ: {cnpj}\n"
+        f"Curso: {curso}\n"
+        f"Area responsavel: {area_nome}\n"
+        f"Etapa atual: {etapa_nome}\n"
+        f"Status do fluxo: {status_nome}\n"
+        f"Pessoa que iniciou o fluxo: {solicitante_nome}\n"
+        f"E-mail do solicitante: {solicitante_mail}\n"
+        f"Observacao: {observacao or '-'}\n\n"
+        f"Acesse o app: {acesso}\n"
+    )
+    return assunto, corpo
+
+
+def notify_protocol(protocolo: str, area: str, etapa: str, status: str, solicitante_email: str = "", observacao: str = "", cancelled: bool = False):
+    assunto, corpo = build_protocol_notification(protocolo, area, etapa, status, observacao, cancelled)
+    if cancelled:
+        recipients = notification_recipients(area, solicitante_email=solicitante_email, include_all_area=True)
+    else:
+        recipients = notification_recipients(area, etapa=etapa, solicitante_email=solicitante_email)
+    for destinatario in recipients:
+        ok, erro = try_send_email(destinatario, assunto, corpo)
+        register_notification(protocolo, destinatario, assunto, corpo, ok, erro)
 
 
 init_db()

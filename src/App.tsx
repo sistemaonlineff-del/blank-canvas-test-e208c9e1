@@ -801,6 +801,8 @@ function AprovacoesPageV2({ user, onDone }: { user: User; onDone: () => void }) 
   const [status, setStatus] = useState("");
   const [query, setQuery] = useState("");
   const [message, setMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const protocols = useAsync(api.protocols, [message]);
   const forms = useAsync(() => selected ? api.forms(selected) : Promise.resolve(null), [selected, message]);
   const rows = (protocols.data?.items || []).filter((row) => canHandleStatus(user, row.status));
@@ -809,21 +811,40 @@ function AprovacoesPageV2({ user, onDone }: { user: User; onDone: () => void }) 
 
   async function advance(observacao: string, dataAgendada: string) {
     if (!selected) return;
-    const result = await api.advanceProtocol(selected, user.usuario, observacao, dataAgendada);
-    setMessage(result.message);
-    onDone();
+    setSubmitting(true);
+    setErrorMessage("");
+    setMessage("");
+    try {
+      const result = await api.advanceProtocol(selected, user.usuario, observacao, dataAgendada);
+      setMessage(result.message || "Fluxo atualizado.");
+      setSelected("");
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erro ao avancar o protocolo.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function cancel(observacao: string) {
     if (!selected) return;
-    const result = await api.cancelProtocol(selected, user.usuario, observacao);
-    setMessage(result.message);
-    onDone();
+    setSubmitting(true);
+    setErrorMessage("");
+    setMessage("");
+    try {
+      const result = await api.cancelProtocol(selected, user.usuario, observacao);
+      setMessage(result.message || "Protocolo cancelado.");
+      setSelected("");
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erro ao cancelar o protocolo.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
     <PageBlock title="Minhas Aprovações">
       {message && <div className="alert success">{message}</div>}
+      {errorMessage && <div className="alert error">{errorMessage}</div>}
       <ProtocolFilters rows={rows} status={status} setStatus={setStatus} query={query} setQuery={setQuery} />
       <DataTable rows={filtered} />
       <div className="inline-form">
@@ -832,7 +853,7 @@ function AprovacoesPageV2({ user, onDone }: { user: User; onDone: () => void }) 
           {filtered.map((row) => <option key={row.protocolo} value={row.protocolo}>{row.protocolo} · {row.entidade} · {row.status}</option>)}
         </select>
       </div>
-      {selected && <ProtocolDetails row={selectedRow} forms={forms.data} approval user={user} onAdvance={advance} onCancel={cancel} />}
+      {selected && <ProtocolDetails row={selectedRow} forms={forms.data} approval user={user} onAdvance={advance} onCancel={cancel} busy={submitting} />}
     </PageBlock>
   );
 }
@@ -1098,7 +1119,7 @@ function ResponseSection({ title, rows, empty }: { title: string; rows: Row[]; e
   );
 }
 
-function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCancel }: { row: Row | undefined; forms: any; approval?: boolean; user?: User; onAdvance?: (observacao: string, dataAgendada: string) => Promise<void>; onCancel?: (observacao: string) => Promise<void> }) {
+function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCancel, busy = false }: { row: Row | undefined; forms: any; approval?: boolean; user?: User; onAdvance?: (observacao: string, dataAgendada: string) => Promise<void>; onCancel?: (observacao: string) => Promise<void>; busy?: boolean }) {
   const [observacao, setObservacao] = useState("");
   const [dataAgendada, setDataAgendada] = useState("");
   const [osError, setOsError] = useState("");
@@ -1159,10 +1180,10 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
             <textarea value={observacao} onChange={(e) => setObservacao(e.target.value)} />
           </label>
           <div className="action-row">
-            <button onClick={() => onAdvance?.(observacao, dataAgendada)} disabled={!user || (String(currentRow.status || "") === "Agendamento" && !dataAgendada)}>
-              {actionLabel(String(currentRow.status || ""))}
+            <button onClick={() => onAdvance?.(observacao, dataAgendada)} disabled={busy || !user || (String(currentRow.status || "") === "Agendamento" && !dataAgendada)}>
+              {busy ? "Enviando..." : actionLabel(String(currentRow.status || ""))}
             </button>
-            <button className="danger" onClick={() => onCancel?.(observacao)} disabled={!user}>Cancelar</button>
+            <button className="danger" onClick={() => onCancel?.(observacao)} disabled={busy || !user}>Cancelar</button>
           </div>
         </div>
       )}
