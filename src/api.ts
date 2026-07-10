@@ -380,6 +380,11 @@ const flaskApi = {
   downloadOs: async (protocolo: string) => {
     window.open(`/api/protocols/${protocolo}/os`, "_blank");
   },
+  processNotifications: (limit = 50) =>
+    request<{ message: string; total: number; sent: number; failed: number; items: Row[] }>(
+      "/api/notificacoes/processar",
+      { method: "POST", body: JSON.stringify({ limit }) }
+    ),
   table: (table: string) => request<{ items: Row[] }>(`/api/admin/table/${table}`),
   saveTable: (table: string, rows: Row[]) =>
     request<any>(`/api/admin/table/${table}`, { method: "POST", body: JSON.stringify({ rows }) })
@@ -601,6 +606,10 @@ const supabaseApi = {
 
   async downloadOs(protocolo: string) {
     return flaskApi.downloadOs(protocolo);
+  },
+
+  async processNotifications(limit = 50) {
+    return flaskApi.processNotifications(limit);
   },
 
   async table(table: string) {

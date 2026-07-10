@@ -491,63 +491,131 @@ def notification_recipients(area: str, etapa: str = "", solicitante_email: str =
     return sorted({str(email).strip() for email in recipients if str(email or "").strip()})
 
 
-def register_notification(protocolo: str, destinatario: str, assunto: str, corpo: str, enviado: bool = False, erro: str = ""):
-    execute(
-        "INSERT INTO notificacoes(protocolo,destinatario,assunto,corpo,enviado,data_criacao,data_envio,erro) VALUES(?,?,?,?,?,?,?,?)",
+def register_notification(protocolo: str, destinatario: str, assunto: str, corpo: str, enviado: bool = False, erro: str = "") -> int | None:
+    return execute(
+        "INSERT INTO notificacoes(protocolo,destinatario,assunto,corpo,enviado,data_criacao,data_envio,erro) VALUES(?,?,?,?,?,?,?,?) RETURNING id",
         (protocolo, destinatario, assunto, corpo, 1 if enviado else 0, now_str(), now_str() if enviado else None, erro),
     )
 
 
-def try_send_email(destinatario: str, assunto: str, corpo: str) -> tuple[bool, str]:
-    resend_key = os.getenv("RESEND_API_KEY", "").strip()
-    resend_from = (os.getenv("MAIL_FROM") or os.getenv("RESEND_FROM_EMAIL") or "").strip()
-    if resend_key and resend_from:
-        try:
-            response = requests.post(
-                "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {resend_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "from": resend_from,
-                    "to": [destinatario],
-                    "subject": assunto,
-                    "text": corpo,
-                },
-                timeout=20,
-            )
-            if response.ok:
-                return True, ""
-            try:
-                details = response.json()
-            except Exception:
-                details = response.text
-            return False, f"Resend: {details}"
-        except Exception as exc:
-            return False, f"Resend: {exc}"
-    host = os.getenv("SMTP_HOST", "")
-    user = os.getenv("SMTP_USER", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    from_email = os.getenv("SMTP_FROM") or user
+def update_notification_status(notification_id: int, enviado: bool, erro: str = ""):
+    execute(
+        "UPDATE notificacoes SET enviado=?, data_envio=?, erro=? WHERE id=?",
+        (1 if enviado else 0, now_str() if enviado else None, erro, notification_id),
+    )
+
+
+def process_notification_queue(limit: int = 50) -> dict[str, Any]:
+    pending = fetch_all(
+        """SELECT id, protocolo, destinatario, assunto, corpo
+           FROM notificacoes
+           WHERE COALESCE(enviado, 0)=0
+           ORDER BY id
+           LIMIT ?""",
+        (limit,),
+    )
+    sent = 0
+    failed = 0
+    processed: list[dict[str, Any]] = []
+    for item in pending:
+        ok, erro = try_send_email(item.get("destinatario", ""), item.get("assunto", ""), item.get("corpo", ""))
+        update_notification_status(item["id"], ok, erro)
+        if ok:
+            sent += 1
+        else:
+            failed += 1
+        processed.append(
+            {
+                "id": item["id"],
+                "destinatario": item.get("destinatario"),
+                "enviado": ok,
+                "erro": erro,
+            }
+        )
+    return {"total": len(pending), "sent": sent, "failed": failed, "items": processed}
+
+
+def _try_send_via_smtp(destinatario: str, assunto: str, corpo: str) -> tuple[bool, str]:
+    host = os.getenv("SMTP_HOST", "").strip()
+    user = os.getenv("SMTP_USER", "").strip()
+    password = os.getenv("SMTP_PASSWORD", "").strip()
+    from_email = (os.getenv("SMTP_FROM") or user).strip()
+    port = int(os.getenv("SMTP_PORT", "587"))
+    use_tls = os.getenv("SMTP_TLS", "1") != "0"
+    use_ssl = os.getenv("SMTP_SSL", "0") == "1"
+    timeout = int(os.getenv("SMTP_TIMEOUT", "20"))
     if not host or not from_email:
-        return False, "SMTP não configurado. Notificação ficou registrada no sistema."
+        return False, "SMTP nao configurado. Informe SMTP_HOST e SMTP_FROM/SMTP_USER."
+
     msg = EmailMessage()
     msg["From"] = from_email
     msg["To"] = destinatario
     msg["Subject"] = assunto
     msg.set_content(corpo)
+
     try:
-        with smtplib.SMTP(host, int(os.getenv("SMTP_PORT", "587"))) as server:
-            if os.getenv("SMTP_TLS", "1") != "0":
-                server.starttls()
-            if user and password:
-                server.login(user, password)
-            server.send_message(msg)
+        if use_ssl:
+            with smtplib.SMTP_SSL(host, port, timeout=timeout) as server:
+                if user and password:
+                    server.login(user, password)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=timeout) as server:
+                if use_tls:
+                    server.starttls()
+                if user and password:
+                    server.login(user, password)
+                server.send_message(msg)
         return True, ""
     except Exception as exc:
-        return False, str(exc)
+        return False, f"SMTP: {exc}"
 
+
+def _try_send_via_resend(destinatario: str, assunto: str, corpo: str) -> tuple[bool, str]:
+    resend_key = os.getenv("RESEND_API_KEY", "").strip()
+    resend_from = (os.getenv("MAIL_FROM") or os.getenv("RESEND_FROM_EMAIL") or "").strip()
+    if not resend_key or not resend_from:
+        return False, "Resend nao configurado. Informe RESEND_API_KEY e MAIL_FROM/RESEND_FROM_EMAIL."
+    try:
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {resend_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": resend_from,
+                "to": [destinatario],
+                "subject": assunto,
+                "text": corpo,
+            },
+            timeout=20,
+        )
+        if response.ok:
+            return True, ""
+        try:
+            details = response.json()
+        except Exception:
+            details = response.text
+        return False, f"Resend: {details}"
+    except Exception as exc:
+        return False, f"Resend: {exc}"
+
+
+def try_send_email(destinatario: str, assunto: str, corpo: str) -> tuple[bool, str]:
+    provider = os.getenv("EMAIL_PROVIDER", "smtp").strip().lower()
+    if provider == "resend":
+        ok, erro = _try_send_via_resend(destinatario, assunto, corpo)
+        if ok:
+            return ok, erro
+        smtp_ok, smtp_erro = _try_send_via_smtp(destinatario, assunto, corpo)
+        return (smtp_ok, smtp_erro) if smtp_ok else (False, f"{erro} | {smtp_erro}")
+
+    ok, erro = _try_send_via_smtp(destinatario, assunto, corpo)
+    if ok:
+        return ok, erro
+    resend_ok, resend_erro = _try_send_via_resend(destinatario, assunto, corpo)
+    return (resend_ok, resend_erro) if resend_ok else (False, f"{erro} | {resend_erro}")
 
 def notify_protocol(protocolo: str, area: str, etapa: str, status: str, solicitante_email: str = "", observacao: str = "", cancelled: bool = False):
     if cancelled:
@@ -683,17 +751,19 @@ def register_user():
                VALUES(?,?,?,?,?,?,?,?,?,1) RETURNING id""",
             (email, email, email, hash_pw(temp), None, 1, 1, 1, data_solicitacao),
         )
-    assunto = "Senha temporária - Sistema Bahia"
-    corpo = f"Olá.\n\nCriamos um acesso temporário para o Sistema Bahia.\n\nE-mail: {email}\nSenha temporária: {temp}\n\nAo entrar, defina uma nova senha."
-    ok, erro = try_send_email(email, assunto, corpo)
-    register_notification(f"ACESSO-{email}", email, assunto, corpo, ok, erro)
-    mod_subject = "Novo usuário aguardando qualificação - Sistema Bahia"
-    mod_body = f"Um novo usuário criou acesso e aguarda qualificação de atividade.\n\nE-mail: {email}\nID: {user_id}\nData: {data_solicitacao}"
+    assunto = "Senha tempor?ria - Sistema Bahia"
+    corpo = f"Ol?.\n\nCriamos um acesso tempor?rio para o Sistema Bahia.\n\nE-mail: {email}\nSenha tempor?ria: {temp}\n\nAo entrar, defina uma nova senha."
+    primary_ok, primary_erro = try_send_email(email, assunto, corpo)
+    register_notification(f"ACESSO-{email}", email, assunto, corpo, primary_ok, primary_erro)
+    mod_subject = "Novo usu?rio aguardando qualifica??o - Sistema Bahia"
+    mod_body = f"Um novo usu?rio criou acesso e aguarda qualifica??o de atividade.\n\nE-mail: {email}\nID: {user_id}\nData: {data_solicitacao}"
     for row in fetch_all("SELECT email FROM usuarios WHERE ativo=1 AND perfil IN ('Administrador','Moderador') AND email IS NOT NULL AND email<>''"):
         destinatario = row.get("email")
         ok, erro = try_send_email(destinatario, mod_subject, mod_body)
         register_notification(f"ACESSO-{user_id}", destinatario, mod_subject, mod_body, ok, erro)
-    return jsonify({"message": "Usuário criado. Enviamos uma senha temporária para o e-mail informado."})
+    if not primary_ok:
+        return jsonify({"error": f"Usu?rio criado, mas o e-mail n?o foi enviado: {primary_erro}"}), 502
+    return jsonify({"message": "Usu?rio criado. Enviamos uma senha tempor?ria para o e-mail informado."})
 
 
 @app.post("/api/change-password")
@@ -713,6 +783,20 @@ def change_password():
     )
     updated = fetch_one("SELECT * FROM usuarios WHERE id=? LIMIT 1", (user_id,))
     return jsonify({"message": "Senha definida com sucesso.", "user": public_user(updated)})
+
+
+@app.post("/api/notificacoes/processar")
+def process_notifications():
+    init_db()
+    data = request.get_json(silent=True) or {}
+    limit = int(data.get("limit") or 50)
+    result = process_notification_queue(limit=max(1, min(limit, 200)))
+    return jsonify(
+        {
+            "message": f"Fila processada. {result['sent']} enviados, {result['failed']} com falha.",
+            **result,
+        }
+    )
 
 
 @app.get("/api/dashboard")

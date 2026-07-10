@@ -868,6 +868,17 @@ function ConfigPage() {
     }
   }
 
+  async function processNotificationQueue() {
+    setErrorMessage("");
+    setMessage("");
+    try {
+      const result = await api.processNotifications(100);
+      setMessage(result.message);
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erro ao processar fila de notificacoes.");
+    }
+  }
+
   return (
     <PageBlock title="Configurações">
       <Tabs value={table} onChange={setTable as any} items={Object.entries(tableLabels)} />
@@ -875,6 +886,9 @@ function ConfigPage() {
       {errorMessage && <div className="alert error">{errorMessage}</div>}
       {table === "usuarios" && !!pendingPasswordUsers.length && (
         <div className="alert warning">Antes de salvar, clique em `Gerar senha` para cada novo usuario adicionado.</div>
+      )}
+      {table === "notificacoes" && (
+        <button type="button" onClick={processNotificationQueue}>Processar fila de notificacoes</button>
       )}
       {table === "usuarios" ? <UsersManagementTable rows={rows} onChange={setRows} /> : <EditableTable rows={rows} onChange={setRows} />}
       <button onClick={save}>Salvar tabela</button>
