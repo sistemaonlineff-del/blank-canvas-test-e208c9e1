@@ -18,6 +18,7 @@ from typing import Any
 import requests
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
+from course_catalog_sync import sync_course_catalog
 
 
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -200,6 +201,8 @@ def execute(sql: str, params: tuple[Any, ...] = ()) -> int | None:
 
 def init_db():
     if USE_POSTGRES:
+        with db() as conn:
+            sync_course_catalog(conn, APP_DIR, USE_POSTGRES)
         return
     ddl = """
     CREATE TABLE IF NOT EXISTS usuarios (
@@ -249,6 +252,10 @@ def init_db():
       curso TEXT,
       area TEXT,
       nivel TEXT,
+      campo_link TEXT,
+      id_questionario TEXT,
+      questionario TEXT,
+      status_mapeamento TEXT,
       descricao TEXT,
       carga_horaria TEXT,
       owner_email TEXT,
@@ -283,6 +290,9 @@ def init_db():
     CREATE TABLE IF NOT EXISTS perguntas_curso (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       curso_id INTEGER,
+      id_pergunta TEXT,
+      id_questionario TEXT,
+      questionario TEXT,
       ordem INTEGER,
       pergunta TEXT,
       pontos_sim INTEGER DEFAULT 1,
@@ -291,6 +301,9 @@ def init_db():
     CREATE TABLE IF NOT EXISTS alternativas_curso (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       pergunta_id INTEGER,
+      id_alternativa TEXT,
+      id_pergunta TEXT,
+      id_questionario TEXT,
       ordem INTEGER,
       alternativa TEXT,
       pontos INTEGER DEFAULT 0,
@@ -371,6 +384,13 @@ def init_db():
       data_envio TEXT,
       erro TEXT
     );
+    CREATE TABLE IF NOT EXISTS importacoes_sistema (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chave TEXT UNIQUE,
+      arquivo TEXT,
+      hash_arquivo TEXT,
+      data_atualizacao TEXT
+    );
     """
     if USE_POSTGRES:
         return
@@ -400,12 +420,37 @@ def init_db():
         }.items():
             if column not in user_columns:
                 conn.execute(f"ALTER TABLE usuarios ADD COLUMN {column} {definition}")
+        for table_name, columns in {
+            "cursos": {
+                "campo_link": "TEXT",
+                "id_questionario": "TEXT",
+                "questionario": "TEXT",
+                "status_mapeamento": "TEXT",
+            },
+            "perguntas_curso": {
+                "id_pergunta": "TEXT",
+                "id_questionario": "TEXT",
+                "questionario": "TEXT",
+            },
+            "alternativas_curso": {
+                "id_alternativa": "TEXT",
+                "id_pergunta": "TEXT",
+                "id_questionario": "TEXT",
+            },
+        }.items():
+            existing_columns = {
+                row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+            }
+            for column, definition in columns.items():
+                if column not in existing_columns:
+                    conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column} {definition}")
         exists = conn.execute("SELECT COUNT(*) AS total FROM usuarios").fetchone()["total"]
         if not exists:
             conn.execute(
                 "INSERT INTO usuarios(nome,usuario,senha_hash,perfil,email,ativo) VALUES(?,?,?,?,?,1)",
                 ("Administrador", "admin", hash_pw("admin123"), "Administrador", ""),
             )
+        sync_course_catalog(conn, APP_DIR, USE_POSTGRES)
 
 
 def public_user(user: dict[str, Any]) -> dict[str, Any]:
