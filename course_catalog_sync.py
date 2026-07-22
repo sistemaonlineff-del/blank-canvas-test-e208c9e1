@@ -28,20 +28,33 @@ def clean_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value).replace("\n", " ")).strip()
 
 
+def course_match_key(value: Any) -> str:
+    text = clean_text(value)
+    try:
+        text = text.encode("latin-1").decode("utf-8")
+    except Exception:
+        pass
+    text = text_key(text)
+    text = re.sub(r"^\d+\s*", "", text)
+    return text.strip()
+
+
 def default_workbook_candidates(app_dir: Path) -> list[Path]:
     configured = clean_text(os.getenv("CURSOS_XLSX_PATH"))
     candidates: list[Path] = []
     if configured:
         candidates.append(Path(configured))
-    candidates.extend(
-        [
-            app_dir / DEFAULT_WORKBOOK_NAME,
-            app_dir / "data" / DEFAULT_WORKBOOK_NAME,
-            app_dir / "assets" / DEFAULT_WORKBOOK_NAME,
-            Path.home() / "Downloads" / DEFAULT_WORKBOOK_NAME,
-            Path(r"C:\Users\fabio\Downloads") / DEFAULT_WORKBOOK_NAME,
-        ]
-    )
+    base_dirs = [
+        app_dir,
+        app_dir / "data",
+        app_dir / "assets",
+        Path.home() / "Downloads",
+        Path(r"C:\Users\fabio\Downloads"),
+    ]
+    for base_dir in base_dirs:
+        candidates.append(base_dir / DEFAULT_WORKBOOK_NAME)
+        if base_dir.exists():
+            candidates.extend(sorted(base_dir.glob("BASE_CURSOS_CIMATEC_SEBRAE*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True))
     unique: list[Path] = []
     seen: set[str] = set()
     for path in candidates:
@@ -53,9 +66,13 @@ def default_workbook_candidates(app_dir: Path) -> list[Path]:
 
 
 def locate_workbook(app_dir: Path) -> Path | None:
-    for candidate in default_workbook_candidates(app_dir):
-        if candidate.exists():
-            return candidate
+    configured = clean_text(os.getenv("CURSOS_XLSX_PATH"))
+    if configured:
+        path = Path(configured)
+        return path if path.exists() else None
+    existing = [candidate for candidate in default_workbook_candidates(app_dir) if candidate.exists()]
+    if existing:
+        return max(existing, key=lambda path: path.stat().st_mtime)
     return None
 
 
@@ -301,14 +318,31 @@ def sync_course_catalog(db_conn: Any, app_dir: Path, use_postgres: bool) -> dict
         use_postgres,
     )
     existing_courses = cursor.fetchall()
+    _execute(
+        cursor,
+        "SELECT curso_id, COUNT(*) AS total FROM perguntas_curso GROUP BY curso_id",
+        (),
+        use_postgres,
+    )
+    question_counts = {
+        int(_fetch_value(row, "curso_id", _fetch_value(row, 0, 0)) or 0): int(_fetch_value(row, "total", _fetch_value(row, 1, 0)) or 0)
+        for row in cursor.fetchall()
+    }
+    course_bucket: dict[tuple[str, str], list[int]] = {}
+    for row in existing_courses:
+        key = (
+            text_key(_fetch_value(row, "area", _fetch_value(row, 2, ""))),
+            course_match_key(_fetch_value(row, "curso", _fetch_value(row, 1, ""))),
+        )
+        course_bucket.setdefault(key, []).append(int(_fetch_value(row, "id", _fetch_value(row, 0, 0)) or 0))
     course_map = {
-        (text_key(_fetch_value(row, "area", _fetch_value(row, 2, ""))), text_key(_fetch_value(row, "curso", _fetch_value(row, 1, "")))): int(_fetch_value(row, "id", _fetch_value(row, 0, 0)) or 0)
-        for row in existing_courses
+        key: sorted(ids, key=lambda course_id: (-question_counts.get(course_id, 0), course_id))[0]
+        for key, ids in course_bucket.items()
     }
 
     synced = 0
     for course in courses:
-        course_key = (text_key(course["area"]), course["curso_key"])
+        course_key = (text_key(course["area"]), course_match_key(course["curso"]))
         course_id = course_map.get(course_key)
         if course_id:
             _execute(
@@ -349,49 +383,118 @@ def sync_course_catalog(db_conn: Any, app_dir: Path, use_postgres: bool) -> dict
                 use_postgres,
             )
             course_map[course_key] = course_id
+            course_bucket.setdefault(course_key, []).append(course_id)
+
+        duplicate_ids = [existing_id for existing_id in course_bucket.get(course_key, []) if existing_id != course_id]
+        for duplicate_id in duplicate_ids:
+            _execute(
+                cursor,
+                "UPDATE cursos SET ativo=? WHERE id=?",
+                (False if use_postgres else 0, duplicate_id),
+                use_postgres,
+            )
 
         _execute(
             cursor,
-            "DELETE FROM alternativas_curso WHERE pergunta_id IN (SELECT id FROM perguntas_curso WHERE curso_id=?)",
+            "SELECT id, pergunta FROM perguntas_curso WHERE curso_id=?",
             (course_id,),
             use_postgres,
         )
-        _execute(cursor, "DELETE FROM perguntas_curso WHERE curso_id=?", (course_id,), use_postgres)
+        existing_questions = cursor.fetchall()
+        question_map = {
+            text_key(_fetch_value(row, "pergunta", _fetch_value(row, 1, ""))): int(_fetch_value(row, "id", _fetch_value(row, 0, 0)) or 0)
+            for row in existing_questions
+        }
 
         for question in course["questions"]:
-            question_id = _insert_and_get_id(
-                cursor,
-                """INSERT INTO perguntas_curso(curso_id,id_pergunta,id_questionario,questionario,ordem,pergunta,pontos_sim,ativo)
-                   VALUES(?,?,?,?,?,?,?,?)""",
-                (
-                    course_id,
-                    f"{course['id_questionario']}_p{question['ordem']}",
-                    course["id_questionario"],
-                    course["questionario"],
-                    question["ordem"],
-                    question["pergunta"],
-                    0,
-                    True if use_postgres else 1,
-                ),
-                use_postgres,
-            )
-            for alternative in question["alternativas"]:
+            question_key = text_key(question["pergunta"])
+            question_id = question_map.get(question_key)
+            if question_id:
                 _execute(
                     cursor,
-                    """INSERT INTO alternativas_curso(pergunta_id,id_alternativa,id_pergunta,id_questionario,ordem,alternativa,pontos,ativo)
-                       VALUES(?,?,?,?,?,?,?,?)""",
+                    """UPDATE perguntas_curso
+                       SET id_pergunta=?, id_questionario=?, questionario=?, ordem=?, pergunta=?, pontos_sim=?, ativo=?
+                       WHERE id=?""",
                     (
-                        question_id,
-                        f"{course['id_questionario']}_p{question['ordem']}_a{alternative['ordem']}",
                         f"{course['id_questionario']}_p{question['ordem']}",
                         course["id_questionario"],
-                        alternative["ordem"],
-                        alternative["alternativa"],
-                        alternative["pontos"],
+                        course["questionario"],
+                        question["ordem"],
+                        question["pergunta"],
+                        0,
+                        True if use_postgres else 1,
+                        question_id,
+                    ),
+                    use_postgres,
+                )
+            else:
+                question_id = _insert_and_get_id(
+                    cursor,
+                    """INSERT INTO perguntas_curso(curso_id,id_pergunta,id_questionario,questionario,ordem,pergunta,pontos_sim,ativo)
+                       VALUES(?,?,?,?,?,?,?,?)""",
+                    (
+                        course_id,
+                        f"{course['id_questionario']}_p{question['ordem']}",
+                        course["id_questionario"],
+                        course["questionario"],
+                        question["ordem"],
+                        question["pergunta"],
+                        0,
                         True if use_postgres else 1,
                     ),
                     use_postgres,
                 )
+                question_map[question_key] = question_id
+
+            _execute(
+                cursor,
+                "SELECT id, alternativa FROM alternativas_curso WHERE pergunta_id=?",
+                (question_id,),
+                use_postgres,
+            )
+            existing_alternatives = cursor.fetchall()
+            alternative_map = {
+                text_key(_fetch_value(row, "alternativa", _fetch_value(row, 1, ""))): int(_fetch_value(row, "id", _fetch_value(row, 0, 0)) or 0)
+                for row in existing_alternatives
+            }
+            for alternative in question["alternativas"]:
+                alternative_key = text_key(alternative["alternativa"])
+                alternative_id = alternative_map.get(alternative_key)
+                if alternative_id:
+                    _execute(
+                        cursor,
+                        """UPDATE alternativas_curso
+                           SET id_alternativa=?, id_pergunta=?, id_questionario=?, ordem=?, alternativa=?, pontos=?, ativo=?
+                           WHERE id=?""",
+                        (
+                            f"{course['id_questionario']}_p{question['ordem']}_a{alternative['ordem']}",
+                            f"{course['id_questionario']}_p{question['ordem']}",
+                            course["id_questionario"],
+                            alternative["ordem"],
+                            alternative["alternativa"],
+                            alternative["pontos"],
+                            True if use_postgres else 1,
+                            alternative_id,
+                        ),
+                        use_postgres,
+                    )
+                else:
+                    _execute(
+                        cursor,
+                        """INSERT INTO alternativas_curso(pergunta_id,id_alternativa,id_pergunta,id_questionario,ordem,alternativa,pontos,ativo)
+                           VALUES(?,?,?,?,?,?,?,?)""",
+                        (
+                            question_id,
+                            f"{course['id_questionario']}_p{question['ordem']}_a{alternative['ordem']}",
+                            f"{course['id_questionario']}_p{question['ordem']}",
+                            course["id_questionario"],
+                            alternative["ordem"],
+                            alternative["alternativa"],
+                            alternative["pontos"],
+                            True if use_postgres else 1,
+                        ),
+                        use_postgres,
+                    )
         synced += 1
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

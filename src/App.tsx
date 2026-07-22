@@ -722,6 +722,9 @@ function CursosPageV2({ user }: { user: User }) {
             ))}
           </div>
         )}
+        {payload.curso_id && !courseQuestions.loading && !courseQuestions.error && !courseQuestions.data?.items.length && (
+          <div className="alert warning">Este curso ainda nao possui questionario cadastrado. Voce pode salvar e seguir o fluxo normalmente.</div>
+        )}
         <label>Observação
           <textarea value={payload.observacao || ""} onChange={(e) => setPayload({ ...payload, observacao: e.target.value })} />
         </label>
