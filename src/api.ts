@@ -513,7 +513,80 @@ const supabaseApi = {
   },
 
   async register(email: string) {
-    return flaskApi.register(email);
+    const db = ensureSupabase();
+    const login = String(email || "").trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(login)) {
+      throw new Error("Informe um e-mail válido.");
+    }
+    const temp = tempPassword();
+    const senha_hash = await sha256(temp);
+    const dataSolicitacao = nowStr();
+    const { data: existing, error: existingError } = await db
+      .from("usuarios")
+      .select("*")
+      .or(`usuario.eq.${login},email.eq.${login}`)
+      .limit(1)
+      .maybeSingle();
+    throwDb(existingError);
+
+    if (existing && dbFalse(existing.ativo)) {
+      throw new Error("Este usuário está inativo. Procure um administrador.");
+    }
+
+    if (existing) {
+      const { error } = await db
+        .from("usuarios")
+        .update({
+          nome: login,
+          usuario: login,
+          email: login,
+          senha_hash,
+          perfil: null,
+          senha_temporaria: true,
+          trocar_senha_obrigatorio: true,
+          acesso_pendente: true,
+          data_solicitacao: dataSolicitacao,
+          ativo: true
+        })
+        .eq("id", existing.id);
+      throwDb(error);
+    } else {
+      const { error } = await db.from("usuarios").insert({
+        nome: login,
+        usuario: login,
+        email: login,
+        senha_hash,
+        perfil: null,
+        senha_temporaria: true,
+        trocar_senha_obrigatorio: true,
+        acesso_pendente: true,
+        data_solicitacao: dataSolicitacao,
+        ativo: true
+      });
+      throwDb(error);
+    }
+
+    const adminRecipients = await fetchActiveUsersByRoles(db, [ROLE_ADMIN, ROLE_MODERATOR]);
+    await queueNotifications(
+      db,
+      `ACESSO-${login}`,
+      adminRecipients.map((user) => String(user.email || user.usuario || "").trim().toLowerCase()),
+      "Novo usuário aguardando qualificação - Sistema Bahia",
+      `Um novo usuário criou acesso e aguarda qualificação de atividade.\n\nE-mail: ${login}\nData: ${dataSolicitacao}`
+    );
+
+    await queueNotifications(
+      db,
+      `ACESSO-${login}`,
+      [login],
+      "Senha temporária - Sistema Bahia",
+      `Olá.\n\nCriamos um acesso temporário para o Sistema Bahia.\n\nE-mail: ${login}\nSenha temporária: ${temp}\n\nAo entrar, defina uma nova senha.`
+    );
+
+    return {
+      message: "Usuário criado. Se o envio automático não estiver configurado, use a senha temporária exibida abaixo.",
+      tempPassword: temp
+    };
   },
 
   async changePassword(userId: number, senha: string) {
@@ -684,7 +757,77 @@ const supabaseApi = {
   },
 
   async createProtocol(payload: Row) {
-    return flaskApi.createProtocol(payload);
+    const db = ensureSupabase();
+    const protocolo = `BA-${new Date().toISOString().replace(/\D/g, "").slice(0, 17)}`;
+    const dataMov = nowStr();
+    const respostas = Array.isArray(payload.respostas) ? payload.respostas : [];
+    const pontuacaoCurso = Number(
+      payload.pontuacao_curso ??
+      respostas.reduce((total: number, row: Row) => total + Number(row.pontuacao || 0), 0)
+    );
+    const statusInicial = STATUS_VALIDACAO;
+    const etapaInicial = "Administrativo";
+
+    const insertPayload = {
+      protocolo,
+      entidade_id: payload.entidade_id,
+      curso_id: payload.curso_id,
+      area: payload.area || "",
+      pontuacao_curso: pontuacaoCurso,
+      status: statusInicial,
+      etapa_atual: etapaInicial,
+      responsavel_atual: etapaInicial,
+      solicitante_nome: payload.solicitante_nome || "",
+      solicitante_email: payload.solicitante_email || "",
+      data_abertura: dataMov,
+      data_atualizacao: dataMov,
+      observacao: payload.observacao || ""
+    };
+
+    const { error: protocolError } = await db.from("protocolos").insert(insertPayload);
+    throwDb(protocolError);
+
+    const { error: historyError } = await db.from("historico_fluxo").insert({
+      protocolo,
+      status_anterior: "",
+      status_novo: statusInicial,
+      usuario: payload.usuario || "admin",
+      data_movimento: dataMov,
+      observacao: payload.observacao || ""
+    });
+    throwDb(historyError);
+
+    if (respostas.length) {
+      const { error: answersError } = await db.from("respostas_curso").insert(
+        respostas.map((row: Row) => ({
+          protocolo,
+          pergunta_id: row.pergunta_id,
+          pergunta: row.pergunta,
+          resposta: row.resposta,
+          pontuacao: row.pontuacao || 0,
+          data_resposta: dataMov
+        }))
+      );
+      throwDb(answersError);
+    }
+
+    const rowForNotification: Row = {
+      ...insertPayload,
+      entidade: payload.entidade || "",
+      curso: payload.curso || "",
+      cnpj: payload.cnpj || ""
+    };
+    const recipients = await fetchStageRecipients(db, rowForNotification, statusInicial, etapaInicial);
+    const { assunto, corpo } = buildApprovalNotification(
+      rowForNotification,
+      statusInicial,
+      etapaInicial,
+      String(payload.observacao || ""),
+      false
+    );
+    await queueNotifications(db, protocolo, recipients, assunto, corpo);
+
+    return { message: "Protocolo criado.", protocolo };
   },
 
   async advanceProtocol(protocolo: string, usuario: string, observacao = "", data_agendada = "") {
@@ -790,11 +933,48 @@ const supabaseApi = {
   },
 
   async downloadOs(protocolo: string) {
-    return flaskApi.downloadOs(protocolo);
+    const db = ensureSupabase();
+    const { data, error } = await db
+      .from("protocolos")
+      .select("*, entidades(*), cursos(curso)")
+      .eq("protocolo", protocolo)
+      .single();
+    throwDb(error);
+    const row = {
+      ...data,
+      entidade: (data as any).entidades?.entidade,
+      cnpj: (data as any).entidades?.cnpj,
+      nivel_entidade: (data as any).entidades?.nivel,
+      municipio_entidade: (data as any).entidades?.municipio_entidade,
+      territorio_identidade: (data as any).entidades?.territorio_identidade,
+      endereco: (data as any).entidades?.endereco,
+      telefone: (data as any).entidades?.telefone,
+      email_responsavel: (data as any).entidades?.email_responsavel,
+      curso: (data as any).cursos?.curso
+    } as Row;
+    const blob = await buildProtocolOsDocument(row);
+    downloadBlob(blob, `${protocolo}.doc`);
   },
 
   async processNotifications(limit = 50) {
-    return flaskApi.processNotifications(limit);
+    const db = ensureSupabase();
+    const { data, error } = await db
+      .from("notificacoes")
+      .select("*")
+      .eq("enviado", false)
+      .order("id", { ascending: true })
+      .limit(limit);
+    throwDb(error);
+    const items = data || [];
+    return {
+      message: items.length
+        ? "Fila localizada no Supabase. Para envio real automático, use a Edge Function/webhook já prevista no projeto."
+        : "Não há notificações pendentes na fila.",
+      total: items.length,
+      sent: 0,
+      failed: 0,
+      items
+    };
   },
 
   async table(table: string) {
@@ -805,9 +985,6 @@ const supabaseApi = {
   },
 
   async saveTable(table: string, rows: Row[]) {
-    if (table === "usuarios") {
-      return flaskApi.saveTable(table, rows);
-    }
     const db = ensureSupabase();
     const normalizedRows = rows.map((row) => normalizeTableRow(table, { ...row }));
     if (table === "usuarios") {

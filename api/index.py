@@ -5,6 +5,7 @@ import html
 import os
 import re
 import secrets
+import shutil
 import smtplib
 import sqlite3
 import unicodedata
@@ -18,15 +19,15 @@ from typing import Any
 import requests
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
-from course_catalog_sync import sync_course_catalog
 
 
 APP_DIR = Path(__file__).resolve().parents[1]
-DB_PATH = APP_DIR / "bahia.db"
+BUNDLED_DB_PATH = APP_DIR / "bahia.db"
 STORAGE_DIR = APP_DIR / "storage"
 OS_UPLOAD_DIR = STORAGE_DIR / "os"
 DATABASE_URL = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
 USE_POSTGRES = bool(DATABASE_URL)
+DB_PATH = Path("/tmp/bahia.db") if os.getenv("VERCEL") and not USE_POSTGRES else BUNDLED_DB_PATH
 APP_URL = (
     os.getenv("APP_URL")
     or os.getenv("FRONTEND_URL")
@@ -60,6 +61,17 @@ EDITABLE_TABLES = {
 
 app = Flask(__name__)
 CORS(app)
+
+
+def try_sync_course_catalog(db_conn: Any) -> None:
+    try:
+        from course_catalog_sync import sync_course_catalog
+    except Exception:
+        return
+    try:
+        sync_course_catalog(db_conn, APP_DIR, USE_POSTGRES)
+    except Exception:
+        return
 
 
 def hash_pw(password: str) -> str:
@@ -164,6 +176,9 @@ def db():
         finally:
             conn.close()
     else:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if DB_PATH != BUNDLED_DB_PATH and not DB_PATH.exists() and BUNDLED_DB_PATH.exists():
+            shutil.copyfile(BUNDLED_DB_PATH, DB_PATH)
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         try:
@@ -202,7 +217,7 @@ def execute(sql: str, params: tuple[Any, ...] = ()) -> int | None:
 def init_db():
     if USE_POSTGRES:
         with db() as conn:
-            sync_course_catalog(conn, APP_DIR, USE_POSTGRES)
+            try_sync_course_catalog(conn)
         return
     ddl = """
     CREATE TABLE IF NOT EXISTS usuarios (
@@ -450,7 +465,7 @@ def init_db():
                 "INSERT INTO usuarios(nome,usuario,senha_hash,perfil,email,ativo) VALUES(?,?,?,?,?,1)",
                 ("Administrador", "admin", hash_pw("admin123"), "Administrador", ""),
             )
-        sync_course_catalog(conn, APP_DIR, USE_POSTGRES)
+        try_sync_course_catalog(conn)
 
 
 def public_user(user: dict[str, Any]) -> dict[str, Any]:
@@ -1428,6 +1443,3 @@ def notify_protocol(protocolo: str, area: str, etapa: str, status: str, solicita
     for destinatario in recipients:
         ok, erro = try_send_email(destinatario, assunto, corpo)
         register_notification(protocolo, destinatario, assunto, corpo, ok, erro)
-
-
-init_db()

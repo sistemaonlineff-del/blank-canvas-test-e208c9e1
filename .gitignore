@@ -6,3 +6,5 @@ storage/os/
 node_modules/
 dist/
 .vercel/
+
+.vercel

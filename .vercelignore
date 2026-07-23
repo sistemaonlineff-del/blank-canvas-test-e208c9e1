@@ -1,0 +1,20 @@
+.git/
+.vercel/
+node_modules/
+dist/
+__pycache__/
+backups/
+storage/
+database/
+pages/
+components/
+data/
+scripts/
+supabase/
+/app.py
+/requirements.txt
+/course_catalog_sync.py
+resumo detalhado.txt
+README.md
+supabase_schema.sql
+supabase_notification_webhook.sql
