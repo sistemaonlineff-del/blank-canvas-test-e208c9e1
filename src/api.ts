@@ -481,6 +481,8 @@ const flaskApi = {
   entities: () => request<{ items: Row[] }>("/api/entities"),
   createEntity: (entidade: string, cnpj: string, user: User) =>
     request<{ id: number; message: string }>("/api/entities", { method: "POST", body: JSON.stringify({ entidade, cnpj, usuario: user.usuario, email: user.email || "" }) }),
+  updateEntity: (id: number, fields: Row) =>
+    request<{ message: string }>(`/api/entities/${id}`, { method: "PUT", body: JSON.stringify({ fields }) }),
   qualificationOptions: () => request<{ items: Row[] }>("/api/qualification/start-options"),
   pendingQualification: (kind: "geral" | "bpf") => request<{ items: Row[] }>(`/api/qualification/pending/${kind}`),
   questions: (kind: "geral" | "bpf") => request<{ items: Row[] }>(`/api/questions/${kind}`),
@@ -674,6 +676,16 @@ const supabaseApi = {
     }).select("id").single();
     throwDb(error);
     return { id: data?.id, message: "Entidade cadastrada." };
+  },
+
+  async updateEntity(id: number, fields: Row) {
+    const db = ensureSupabase();
+    const payload = Object.fromEntries(
+      Object.entries(fields).filter(([, value]) => value !== undefined)
+    );
+    const { error } = await db.from("entidades").update(payload).eq("id", id);
+    throwDb(error);
+    return { message: "Entidade atualizada." };
   },
 
   async qualificationOptions() {

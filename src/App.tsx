@@ -256,10 +256,35 @@ function HomePage({ user }: { user: User }) {
 function EntidadesPage({ user }: { user: User }) {
   const [nome, setNome] = useState("");
   const [cnpj, setCnpj] = useState("");
+  const [selectedEntity, setSelectedEntity] = useState<Row | null>(null);
+  const [entityFields, setEntityFields] = useState<Row>({});
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [savingEntity, setSavingEntity] = useState(false);
   const { data, loading, error, reload } = useAsync(api.entities, [message]);
+
+  useEffect(() => {
+    if (!selectedEntity) {
+      setEntityFields({});
+      return;
+    }
+    setEntityFields({
+      entidade: selectedEntity.entidade || "",
+      cnpj: selectedEntity.cnpj || "",
+      municipio_entidade: selectedEntity.municipio_entidade || "",
+      territorio_identidade: selectedEntity.territorio_identidade || "",
+      endereco: selectedEntity.endereco || "",
+      telefone: selectedEntity.telefone || "",
+      email_responsavel: selectedEntity.email_responsavel || "",
+      status_qualificacao: selectedEntity.status_qualificacao || "",
+      nivel: selectedEntity.nivel || "",
+      certificacao: selectedEntity.certificacao || "",
+      licenca_ambiental: selectedEntity.licenca_ambiental || "",
+      numero_convenio: selectedEntity.numero_convenio || "",
+      natureza_juridica: selectedEntity.natureza_juridica || ""
+    });
+  }, [selectedEntity]);
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -278,14 +303,106 @@ function EntidadesPage({ user }: { user: User }) {
     }
   }
 
+  async function saveEntity(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedEntity) return;
+    setErrorMessage("");
+    setSavingEntity(true);
+    try {
+      const result = await api.updateEntity(selectedEntity.id, entityFields);
+      setMessage(result.message);
+      await reload();
+      setSelectedEntity((data?.items || []).find((item) => String(item.id) === String(selectedEntity.id)) || { ...selectedEntity, ...entityFields });
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erro ao atualizar entidade.");
+    } finally {
+      setSavingEntity(false);
+    }
+  }
+
   return (
     <PageBlock title="Entidades">
-      <form className="inline-form" onSubmit={create}>
-        <label>Cadastrar Nova entidade</label>
-        <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome da Entidade" />
-        <input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="CNPJ da Entidade" />
-        <button disabled={!nome.trim() || !cnpj.trim() || submitting}>{submitting ? "Salvando..." : "Salvar"}</button>
-      </form>
+      <div className="config-workspace">
+        <div className="config-list-panel">
+          <div className="config-list-header">
+            <div>
+              <h3>Cadastro rapido</h3>
+              <p>Cadastre uma nova entidade e depois selecione qualquer registro para editar os dados com mais detalhe.</p>
+            </div>
+          </div>
+          <form className="entity-admin-form" onSubmit={create}>
+            <label>Nome da entidade
+              <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome da Entidade" />
+            </label>
+            <label>CNPJ
+              <input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="CNPJ da Entidade" />
+            </label>
+            <button disabled={!nome.trim() || !cnpj.trim() || submitting}>{submitting ? "Salvando..." : "Cadastrar entidade"}</button>
+          </form>
+          <EntitySearchField
+            label="Selecionar entidade para editar"
+            items={data?.items || []}
+            value={selectedEntity?.id || ""}
+            helperText="Digite o nome, CNPJ, codigo ou nivel e selecione a entidade para editar os dados cadastrados."
+            emptyText="Nenhuma entidade encontrada para essa busca."
+            onChange={(item) => setSelectedEntity(item)}
+          />
+        </div>
+        <form className="config-form-panel entity-admin-form" onSubmit={saveEntity}>
+          <div className="config-form-header">
+            <div>
+              <h3>{selectedEntity ? "Editar entidade" : "Escolha uma entidade"}</h3>
+              <p>{selectedEntity ? "Atualize os campos registrados dessa entidade e salve as alteracoes." : "Selecione uma entidade no campo ao lado para carregar os dados."}</p>
+            </div>
+          </div>
+          {selectedEntity ? (
+            <>
+              <div className="form-grid">
+                <label>Nome da entidade
+                  <input value={entityFields.entidade || ""} onChange={(e) => setEntityFields({ ...entityFields, entidade: e.target.value })} />
+                </label>
+                <label>CNPJ
+                  <input value={entityFields.cnpj || ""} onChange={(e) => setEntityFields({ ...entityFields, cnpj: e.target.value })} />
+                </label>
+                <label>Status da qualificacao
+                  <input value={entityFields.status_qualificacao || ""} onChange={(e) => setEntityFields({ ...entityFields, status_qualificacao: e.target.value })} />
+                </label>
+                <label>Nivel
+                  <input value={entityFields.nivel || ""} onChange={(e) => setEntityFields({ ...entityFields, nivel: e.target.value })} />
+                </label>
+                <label>Municipio
+                  <input value={entityFields.municipio_entidade || ""} onChange={(e) => setEntityFields({ ...entityFields, municipio_entidade: e.target.value })} />
+                </label>
+                <label>Territorio
+                  <input value={entityFields.territorio_identidade || ""} onChange={(e) => setEntityFields({ ...entityFields, territorio_identidade: e.target.value })} />
+                </label>
+                <label>Endereco
+                  <input value={entityFields.endereco || ""} onChange={(e) => setEntityFields({ ...entityFields, endereco: e.target.value })} />
+                </label>
+                <label>Telefone
+                  <input value={entityFields.telefone || ""} onChange={(e) => setEntityFields({ ...entityFields, telefone: e.target.value })} />
+                </label>
+                <label>Email responsavel
+                  <input value={entityFields.email_responsavel || ""} onChange={(e) => setEntityFields({ ...entityFields, email_responsavel: e.target.value })} />
+                </label>
+                <label>Certificacao
+                  <input value={entityFields.certificacao || ""} onChange={(e) => setEntityFields({ ...entityFields, certificacao: e.target.value })} />
+                </label>
+                <label>Licenca ambiental
+                  <input value={entityFields.licenca_ambiental || ""} onChange={(e) => setEntityFields({ ...entityFields, licenca_ambiental: e.target.value })} />
+                </label>
+                <label>Numero do convenio
+                  <input value={entityFields.numero_convenio || ""} onChange={(e) => setEntityFields({ ...entityFields, numero_convenio: e.target.value })} />
+                </label>
+                <label>Natureza juridica
+                  <input value={entityFields.natureza_juridica || ""} onChange={(e) => setEntityFields({ ...entityFields, natureza_juridica: e.target.value })} />
+                </label>
+              </div>
+              <button disabled={savingEntity}>{savingEntity ? "Salvando..." : "Salvar alteracoes da entidade"}</button>
+            </>
+          ) : <div className="empty">Selecione uma entidade para carregar os dados e editar os valores registrados.</div>}
+        </form>
+      </div>
       {message && <div className="alert success">{message}</div>}
       {errorMessage && <div className="alert error">{errorMessage}</div>}
       {loading ? <Loading /> : error ? <ErrorMessage text={error} /> : <DataTable rows={data?.items || []} />}
