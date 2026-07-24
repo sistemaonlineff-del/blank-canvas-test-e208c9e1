@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import React, { FormEvent, useEffect, useState } from "react";
 import { CheckCircle2, Database, FileText, Home, LogOut, RefreshCw, Search, Settings, UserPlus } from "lucide-react";
 import { api, CADASTRO_OPTIONS, Row, User, USER_ROLE_OPTIONS } from "./api";
 import logo1 from "../assets/logo_1.jpeg";
@@ -980,6 +980,321 @@ function AprovacoesPageV2({ user, onDone }: { user: User; onDone: () => void }) 
   );
 }
 
+type ConfigFieldType = "text" | "number" | "textarea" | "select" | "toggle";
+type ConfigOption = { label: string; value: string };
+type ConfigReferenceData = { cursos: Row[]; perguntasCurso: Row[] };
+type ConfigFieldDefinition = {
+  key: string;
+  label: string;
+  type?: ConfigFieldType;
+  placeholder?: string;
+  options?: ConfigOption[] | ((references: ConfigReferenceData) => ConfigOption[]);
+};
+type ConfigSchema = {
+  title: string;
+  description: string;
+  addLabel: string;
+  fields: ConfigFieldDefinition[];
+  defaultRow: () => Row;
+  itemLabel: (row: Row, references: ConfigReferenceData) => string;
+};
+
+const AREA_OPTIONS: ConfigOption[] = [
+  { label: "CIMATEC", value: "CIMATEC" },
+  { label: "SEBRAE", value: "SEBRAE" }
+];
+
+const LEVEL_OPTIONS: ConfigOption[] = [
+  { label: "Básico", value: "Básico" },
+  { label: "Intermediário", value: "Intermediário" },
+  { label: "Avançado", value: "Avançado" }
+];
+
+const OWNER_STAGE_OPTIONS: ConfigOption[] = [
+  { label: "Administrativo", value: "Administrativo" },
+  { label: "Analise Tecnica", value: "Analise Tecnica" },
+  { label: "Agendamento", value: "Agendamento" },
+  { label: "Execucao", value: "Execucao" }
+];
+
+const CONFIG_SCHEMAS: Record<string, ConfigSchema> = {
+  cursos: {
+    title: "Cursos",
+    description: "Cadastre cursos sem depender da tabela inteira. Selecione um item, edite os campos e salve.",
+    addLabel: "Adicionar curso",
+    defaultRow: () => ({ curso: "", area: "CIMATEC", nivel: "Básico", descricao: "", carga_horaria: "", estoque_total: 0, owner_email: "", ativo: true }),
+    itemLabel: (row) => `${row.curso || "Novo curso"} · ${row.area || "-"} · ${row.nivel || "-"}`,
+    fields: [
+      { key: "curso", label: "Nome do curso", placeholder: "Ex.: Boas práticas de fabricação" },
+      { key: "area", label: "Área", type: "select", options: AREA_OPTIONS },
+      { key: "nivel", label: "Nível", type: "select", options: LEVEL_OPTIONS },
+      { key: "descricao", label: "Descrição", type: "textarea" },
+      { key: "carga_horaria", label: "Carga horária" },
+      { key: "estoque_total", label: "Estoque total", type: "number" },
+      { key: "owner_email", label: "Email do responsável" },
+      { key: "ativo", label: "Ativo", type: "toggle" }
+    ]
+  },
+  perguntas_qualificacao: {
+    title: "Perguntas Entidade",
+    description: "Crie perguntas do Formulário Geral com as opções e pontuações já organizadas.",
+    addLabel: "Adicionar pergunta de entidade",
+    defaultRow: () => ({ questionario: "", ordem: "", pergunta: "", tipo: "Multipla", opcao_1: "", opcao_2: "", opcao_3: "", pontos_1: 0, pontos_2: 5, pontos_3: 10, pontos_sim: 1, ativo: true }),
+    itemLabel: (row) => `${row.questionario || "Questionário"} · ${row.ordem || "?"} · ${row.pergunta || "Nova pergunta"}`,
+    fields: [
+      { key: "questionario", label: "Questionário" },
+      { key: "ordem", label: "Ordem", type: "number" },
+      { key: "pergunta", label: "Pergunta", type: "textarea" },
+      { key: "tipo", label: "Tipo" },
+      { key: "opcao_1", label: "Opção 1" },
+      { key: "pontos_1", label: "Pontos opção 1", type: "number" },
+      { key: "opcao_2", label: "Opção 2" },
+      { key: "pontos_2", label: "Pontos opção 2", type: "number" },
+      { key: "opcao_3", label: "Opção 3" },
+      { key: "pontos_3", label: "Pontos opção 3", type: "number" },
+      { key: "pontos_sim", label: "Pontos padrão SIM", type: "number" },
+      { key: "ativo", label: "Ativo", type: "toggle" }
+    ]
+  },
+  perguntas_bpf: {
+    title: "Perguntas BPF",
+    description: "Edite ou adicione perguntas do BPF em um formulário mais limpo, com seção e opções separadas.",
+    addLabel: "Adicionar pergunta BPF",
+    defaultRow: () => ({ secao: "", subsecao: "", codigo_pergunta: "", ordem: "", pergunta: "", tipo_resposta: "Multipla", opcoes: "S;N;P;NA", pontos_sim: 1, ativo: true }),
+    itemLabel: (row) => `${row.secao || "Seção"} · ${row.codigo_pergunta || row.ordem || "?"} · ${row.pergunta || "Nova pergunta"}`,
+    fields: [
+      { key: "secao", label: "Seção" },
+      { key: "subsecao", label: "Subseção" },
+      { key: "codigo_pergunta", label: "Código / título" },
+      { key: "ordem", label: "Ordem", type: "number" },
+      { key: "pergunta", label: "Pergunta", type: "textarea" },
+      { key: "tipo_resposta", label: "Tipo de resposta" },
+      { key: "opcoes", label: "Opções (separadas por ;)" },
+      { key: "pontos_sim", label: "Pontos do SIM", type: "number" },
+      { key: "ativo", label: "Ativo", type: "toggle" }
+    ]
+  },
+  perguntas_curso: {
+    title: "Perguntas Curso",
+    description: "Escolha o curso, defina a ordem e escreva a pergunta sem precisar navegar por uma planilha gigante.",
+    addLabel: "Adicionar pergunta de curso",
+    defaultRow: () => ({ curso_id: "", ordem: "", pergunta: "", pontos_sim: 1, ativo: true }),
+    itemLabel: (row, references) => {
+      const course = references.cursos.find((item) => String(item.id) === String(row.curso_id));
+      return `${course?.curso || "Curso"} · ${row.ordem || "?"} · ${row.pergunta || "Nova pergunta"}`;
+    },
+    fields: [
+      { key: "curso_id", label: "Curso", type: "select", options: (references) => references.cursos.map((item) => ({ label: `${item.curso} · ${item.area || "-"}`, value: String(item.id) })) },
+      { key: "ordem", label: "Ordem", type: "number" },
+      { key: "pergunta", label: "Pergunta", type: "textarea" },
+      { key: "pontos_sim", label: "Pontos padrão", type: "number" },
+      { key: "ativo", label: "Ativo", type: "toggle" }
+    ]
+  },
+  alternativas_curso: {
+    title: "Alternativas Curso",
+    description: "Cadastre as alternativas vinculadas à pergunta correta, com ordem e pontuação separadas.",
+    addLabel: "Adicionar alternativa",
+    defaultRow: () => ({ pergunta_id: "", ordem: "", alternativa: "", pontos: 0, ativo: true }),
+    itemLabel: (row, references) => {
+      const question = references.perguntasCurso.find((item) => String(item.id) === String(row.pergunta_id));
+      return `${question?.pergunta || "Pergunta"} · ${row.ordem || "?"} · ${row.alternativa || "Nova alternativa"}`;
+    },
+    fields: [
+      { key: "pergunta_id", label: "Pergunta do curso", type: "select", options: (references) => references.perguntasCurso.map((item) => ({ label: `${item.id} · ${item.pergunta}`, value: String(item.id) })) },
+      { key: "ordem", label: "Ordem", type: "number" },
+      { key: "alternativa", label: "Alternativa", type: "textarea" },
+      { key: "pontos", label: "Pontos", type: "number" },
+      { key: "ativo", label: "Ativo", type: "toggle" }
+    ]
+  },
+  owners_area: {
+    title: "Owners por Área",
+    description: "Defina responsáveis por área e etapa em uma lista simples, com remoção rápida e visual limpa.",
+    addLabel: "Adicionar owner",
+    defaultRow: () => ({ area: "CIMATEC", etapa: "Administrativo", nome: "", email: "", usuario: "", ativo: true }),
+    itemLabel: (row) => `${row.area || "Área"} · ${row.etapa || "Etapa"} · ${row.nome || "Novo owner"}`,
+    fields: [
+      { key: "area", label: "Área", type: "select", options: AREA_OPTIONS },
+      { key: "etapa", label: "Etapa", type: "select", options: OWNER_STAGE_OPTIONS },
+      { key: "nome", label: "Nome" },
+      { key: "email", label: "Email" },
+      { key: "usuario", label: "Usuário" },
+      { key: "ativo", label: "Ativo", type: "toggle" }
+    ]
+  },
+  entidades: {
+    title: "Entidades",
+    description: "Atualize os dados principais da entidade em um cadastro focado, sem precisar editar coluna por coluna na grade.",
+    addLabel: "Adicionar entidade",
+    defaultRow: () => ({ entidade: "", cnpj: "", municipio_entidade: "", certificacao: "", email_responsavel: "", telefone: "", endereco: "", ativo: true }),
+    itemLabel: (row) => `${row.entidade || "Nova entidade"} · ${row.cnpj || "Sem CNPJ"}`,
+    fields: [
+      { key: "entidade", label: "Nome da entidade" },
+      { key: "cnpj", label: "CNPJ" },
+      { key: "municipio_entidade", label: "Município" },
+      { key: "territorio_identidade", label: "Território" },
+      { key: "certificacao", label: "Certificação" },
+      { key: "licenca_ambiental", label: "Licença ambiental" },
+      { key: "email_responsavel", label: "Email responsável" },
+      { key: "telefone", label: "Telefone" },
+      { key: "endereco", label: "Endereço", type: "textarea" },
+      { key: "ativo", label: "Ativo", type: "toggle" }
+    ]
+  }
+};
+
+function makeTempKey() {
+  return `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function fieldOptions(field: ConfigFieldDefinition, references: ConfigReferenceData) {
+  if (!field.options) return [];
+  return typeof field.options === "function" ? field.options(references) : field.options;
+}
+
+function ConfigCollectionEditor({ table, rows, onChange, references }: { table: string; rows: Row[]; onChange: (rows: Row[]) => void; references: ConfigReferenceData }) {
+  const schema = CONFIG_SCHEMAS[table];
+  const [search, setSearch] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
+  const [selectedKey, setSelectedKey] = useState("");
+
+  const visibleRows = rows.filter((row) => {
+    if (!showInactive && row.ativo != null && String(row.ativo) === "false") return false;
+    const label = schema.itemLabel(row, references).toLowerCase();
+    return !search.trim() || label.includes(search.trim().toLowerCase());
+  });
+
+  useEffect(() => {
+    if (!visibleRows.length) {
+      setSelectedKey("");
+      return;
+    }
+    if (!visibleRows.some((row) => String(row.id ?? row._tempKey ?? "") === selectedKey)) {
+      setSelectedKey(String(visibleRows[0].id ?? visibleRows[0]._tempKey ?? ""));
+    }
+  }, [selectedKey, visibleRows]);
+
+  function addRecord() {
+    const nextRow = { ...schema.defaultRow(), _tempKey: makeTempKey() };
+    onChange([nextRow, ...rows]);
+    setSelectedKey(String(nextRow._tempKey));
+  }
+
+  function updateRecord(recordKey: string, field: string, value: unknown) {
+    onChange(
+      rows.map((row) => {
+        const key = String(row.id ?? row._tempKey ?? "");
+        return key === recordKey ? { ...row, [field]: value } : row;
+      })
+    );
+  }
+
+  function removeRecord(recordKey: string) {
+    const target = rows.find((row) => String(row.id ?? row._tempKey ?? "") === recordKey);
+    if (!target) return;
+    const label = schema.itemLabel(target, references);
+    if (!window.confirm(`Remover "${label}"?`)) return;
+    const nextRows = rows.filter((row) => String(row.id ?? row._tempKey ?? "") !== recordKey);
+    onChange(nextRows);
+    setSelectedKey("");
+  }
+
+  const selectedRow = rows.find((row) => String(row.id ?? row._tempKey ?? "") === selectedKey);
+
+  return (
+    <div className="config-workspace">
+      <aside className="config-list-panel">
+        <div className="config-list-header">
+          <div>
+            <h3>{schema.title}</h3>
+            <p>{schema.description}</p>
+          </div>
+          <button type="button" onClick={addRecord}>{schema.addLabel}</button>
+        </div>
+        <div className="config-list-tools">
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Buscar em ${schema.title.toLowerCase()}`} />
+          <label className="toggle-row">
+            <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
+            <span>Mostrar inativos</span>
+          </label>
+        </div>
+        <div className="config-record-list">
+          {visibleRows.length ? visibleRows.map((row) => {
+            const recordKey = String(row.id ?? row._tempKey ?? "");
+            const active = selectedKey === recordKey;
+            return (
+              <button key={recordKey} type="button" className={active ? "config-record-item active" : "config-record-item"} onClick={() => setSelectedKey(recordKey)}>
+                <strong>{schema.itemLabel(row, references)}</strong>
+                <span>{row.id ? `ID ${row.id}` : "Novo registro"}</span>
+              </button>
+            );
+          }) : <div className="empty">Nenhum registro encontrado.</div>}
+        </div>
+      </aside>
+      <section className="config-form-panel">
+        {selectedRow ? (
+          <>
+            <div className="config-form-header">
+              <div>
+                <h3>{schema.itemLabel(selectedRow, references)}</h3>
+                <p>Edite os campos abaixo e use remover apenas para o item selecionado.</p>
+              </div>
+              <button type="button" className="danger" onClick={() => removeRecord(String(selectedRow.id ?? selectedRow._tempKey ?? ""))}>Remover item</button>
+            </div>
+            <div className="form-grid">
+              {schema.fields.map((field) => {
+                const value = selectedRow[field.key];
+                const options = fieldOptions(field, references);
+                if (field.type === "textarea") {
+                  return (
+                    <label key={field.key}>
+                      {field.label}
+                      <textarea value={String(value ?? "")} onChange={(e) => updateRecord(String(selectedRow.id ?? selectedRow._tempKey ?? ""), field.key, e.target.value)} />
+                    </label>
+                  );
+                }
+                if (field.type === "select") {
+                  return (
+                    <label key={field.key}>
+                      {field.label}
+                      <select value={String(value ?? "")} onChange={(e) => updateRecord(String(selectedRow.id ?? selectedRow._tempKey ?? ""), field.key, e.target.value)}>
+                        <option value="">Selecionar</option>
+                        {options.map((option) => <option key={`${field.key}_${option.value}`} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </label>
+                  );
+                }
+                if (field.type === "toggle") {
+                  return (
+                    <label key={field.key} className="toggle-card">
+                      <span>{field.label}</span>
+                      <input type="checkbox" checked={Boolean(value)} onChange={(e) => updateRecord(String(selectedRow.id ?? selectedRow._tempKey ?? ""), field.key, e.target.checked)} />
+                    </label>
+                  );
+                }
+                return (
+                  <label key={field.key}>
+                    {field.label}
+                    <input
+                      type={field.type === "number" ? "number" : "text"}
+                      value={String(value ?? "")}
+                      placeholder={field.placeholder || ""}
+                      onChange={(e) => updateRecord(String(selectedRow.id ?? selectedRow._tempKey ?? ""), field.key, field.type === "number" ? e.target.value : e.target.value)}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <div className="empty">Escolha um item da lista ou clique em adicionar para começar.</div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function ConfigPage() {
   const [table, setTable] = useState("cursos");
   const [rows, setRows] = useState<Row[]>([]);
@@ -989,6 +1304,8 @@ function ConfigPage() {
     table === "usuarios"
       ? rows.filter((row) => !row.id && String(row.email || row.usuario || row.nome || "").trim() && !row.senha_hash)
       : [];
+  const courseReferences = useAsync(() => api.table("cursos"), [message]);
+  const questionReferences = useAsync(() => api.table("perguntas_curso"), [message]);
 
   useEffect(() => {
     setErrorMessage("");
@@ -1022,6 +1339,11 @@ function ConfigPage() {
     }
   }
 
+  const references: ConfigReferenceData = {
+    cursos: courseReferences.data?.items || [],
+    perguntasCurso: questionReferences.data?.items || []
+  };
+
   return (
     <PageBlock title="Configurações">
       <Tabs value={table} onChange={setTable as any} items={Object.entries(tableLabels)} />
@@ -1030,11 +1352,20 @@ function ConfigPage() {
       {table === "usuarios" && !!pendingPasswordUsers.length && (
         <div className="alert warning">Antes de salvar, clique em `Gerar senha` para cada novo usuario adicionado.</div>
       )}
-      {table === "notificacoes" && (
-        <button type="button" onClick={processNotificationQueue}>Processar fila de notificacoes</button>
+      {table === "notificacoes" ? (
+        <>
+          <div className="config-notice">
+            <p>As notificações ficam em uma fila simples. Você pode revisar os registros abaixo ou processar a fila manualmente.</p>
+            <button type="button" onClick={processNotificationQueue}>Processar fila de notificacoes</button>
+          </div>
+          <DataTable rows={rows} />
+        </>
+      ) : table === "usuarios" ? (
+        <UsersManagementTable rows={rows} onChange={setRows} />
+      ) : (
+        <ConfigCollectionEditor table={table} rows={rows} onChange={setRows} references={references} />
       )}
-      {table === "usuarios" ? <UsersManagementTable rows={rows} onChange={setRows} /> : <EditableTable rows={rows} onChange={setRows} />}
-      <button onClick={save}>Salvar tabela</button>
+      {table !== "notificacoes" && <button onClick={save}>Salvar alterações</button>}
     </PageBlock>
   );
 }
@@ -1143,37 +1474,6 @@ function UsersManagementTable({ rows, onChange }: { rows: Row[]; onChange: (rows
           </tbody>
         </table>
       </div>
-    </div>
-  );
-}
-
-function EditableTable({ rows, onChange }: { rows: Row[]; onChange: (rows: Row[]) => void }) {
-  const columns = useMemo(() => Array.from(new Set(rows.flatMap((row) => Object.keys(row)))), [rows]);
-  const editableColumns = columns.length ? columns : ["curso", "area", "nivel", "ativo"];
-
-  function update(index: number, key: string, value: string) {
-    const next = rows.slice();
-    next[index] = { ...next[index], [key]: value };
-    onChange(next);
-  }
-
-  return (
-    <div className="table-scroll">
-      <table>
-        <thead><tr>{editableColumns.map((col) => <th key={col}>{col}</th>)}<th></th></tr></thead>
-        <tbody>
-          {[...rows, {}].map((row, index) => (
-            <tr key={index}>
-              {editableColumns.map((col) => (
-                <td key={col}>
-                  <input value={row[col] ?? ""} disabled={col === "id" && Boolean(row[col])} onChange={(e) => update(index, col, e.target.value)} />
-                </td>
-              ))}
-              <td><button className="icon" onClick={() => onChange(rows.filter((_, i) => i !== index))}>Remover</button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

@@ -1079,18 +1079,24 @@ const supabaseApi = {
   async saveTable(table: string, rows: Row[]) {
     const db = ensureSupabase();
     const normalizedRows = rows.map((row) => normalizeTableRow(table, { ...row }));
-    if (table === "usuarios") {
-      const { data: existingRows, error: existingError } = await db.from(table).select("id");
-      throwDb(existingError);
-      const incomingIds = new Set(normalizedRows.filter((row) => row.id).map((row) => row.id));
-      const removedIds = (existingRows || []).map((row: Row) => row.id).filter((id: number) => !incomingIds.has(id));
-      if (removedIds.length) {
+    const { data: existingRows, error: existingError } = await db.from(table).select("*");
+    throwDb(existingError);
+    const incomingIds = new Set(normalizedRows.filter((row) => row.id).map((row) => row.id));
+    const removedRows = (existingRows || []).filter((row: Row) => row.id && !incomingIds.has(row.id));
+    const removedIds = removedRows.map((row: Row) => row.id);
+    if (removedIds.length) {
+      const supportsActiveFlag = removedRows.some((row: Row) => Object.prototype.hasOwnProperty.call(row, "ativo"));
+      if (table === "usuarios" || !supportsActiveFlag) {
         const { error: deleteError } = await db.from(table).delete().in("id", removedIds);
         throwDb(deleteError);
+      } else {
+        const { error: deactivateError } = await db.from(table).update({ ativo: false }).in("id", removedIds);
+        throwDb(deactivateError);
       }
     }
     for (const clean of normalizedRows) {
       delete clean._deleted;
+      delete clean._tempKey;
       if (clean.id) {
         const id = clean.id;
         const previous =
