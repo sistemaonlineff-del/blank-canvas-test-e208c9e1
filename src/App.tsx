@@ -1371,26 +1371,41 @@ function ConfigPage() {
 }
 
 function UsersManagementTable({ rows, onChange }: { rows: Row[]; onChange: (rows: Row[]) => void }) {
+  const [search, setSearch] = useState("");
+  const [selectedKey, setSelectedKey] = useState("");
+
   function addUser() {
-    onChange([
-      {
-        email: "",
-        usuario: "",
-        nome: "",
-        perfil: null,
-        ativo: true,
-        acesso_pendente: false,
-        senha_temporaria: false,
-        trocar_senha_obrigatorio: false
-      },
-      ...rows
-    ]);
+    const newUser = {
+      email: "",
+      usuario: "",
+      nome: "",
+      perfil: null,
+      ativo: true,
+      acesso_pendente: false,
+      senha_temporaria: false,
+      trocar_senha_obrigatorio: false,
+      _tempKey: makeTempKey()
+    };
+    onChange([newUser, ...rows]);
+    setSelectedKey(String(newUser._tempKey));
   }
 
-  function update(index: number, patch: Row) {
-    const next = rows.slice();
-    next[index] = { ...next[index], ...patch };
-    onChange(next);
+  function update(recordKey: string, patch: Row) {
+    onChange(
+      rows.map((row) => {
+        const key = String(row.id ?? row._tempKey ?? "");
+        return key === recordKey ? { ...row, ...patch } : row;
+      })
+    );
+  }
+
+  function remove(recordKey: string) {
+    const target = rows.find((row) => String(row.id ?? row._tempKey ?? "") === recordKey);
+    if (!target) return;
+    const label = target.nome || target.email || target.usuario || "este usuário";
+    if (!window.confirm(`Remover "${label}"?`)) return;
+    onChange(rows.filter((row) => String(row.id ?? row._tempKey ?? "") !== recordKey));
+    setSelectedKey("");
   }
 
   async function hashValue(value: string) {
@@ -1409,10 +1424,10 @@ function UsersManagementTable({ rows, onChange }: { rows: Row[]; onChange: (rows
     return "Ativo";
   }
 
-  async function resetPassword(index: number) {
+  async function resetPassword(recordKey: string) {
     const senha = tempPassword();
     const senha_hash = await hashValue(senha);
-    update(index, {
+    update(recordKey, {
       senha_hash,
       senha_temporaria: true,
       trocar_senha_obrigatorio: true,
@@ -1420,60 +1435,105 @@ function UsersManagementTable({ rows, onChange }: { rows: Row[]; onChange: (rows
     });
   }
 
+  const visibleRows = rows.filter((row) => {
+    const term = search.trim().toLowerCase();
+    if (!term) return true;
+    return [row.nome, row.email, row.usuario, row.perfil].some((value) => String(value || "").toLowerCase().includes(term));
+  });
+
+  useEffect(() => {
+    if (!visibleRows.length) {
+      setSelectedKey("");
+      return;
+    }
+    if (!visibleRows.some((row) => String(row.id ?? row._tempKey ?? "") === selectedKey)) {
+      setSelectedKey(String(visibleRows[0].id ?? visibleRows[0]._tempKey ?? ""));
+    }
+  }, [selectedKey, visibleRows]);
+
+  const selectedRow = rows.find((row) => String(row.id ?? row._tempKey ?? "") === selectedKey);
+  const selectedRecordKey = String(selectedRow?.id ?? selectedRow?._tempKey ?? "");
+
   return (
-    <div className="users-table-wrap">
-      <button type="button" onClick={addUser}>Adicionar usuario</button>
-      <div className="table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>E-mail</th>
-              <th>Nome</th>
-              <th>Redefinir senha</th>
-              <th>Status</th>
-              <th>Cargo</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={index}>
-                <td><input value={row.email ?? row.usuario ?? ""} onChange={(e) => update(index, { email: e.target.value, usuario: e.target.value })} /></td>
-                <td><input value={row.nome ?? ""} onChange={(e) => update(index, { nome: e.target.value })} /></td>
-                <td>
-                  <div className="password-reset-cell">
-                    <button className="icon" type="button" onClick={() => resetPassword(index)}>Gerar senha</button>
-                    <span className="temp-password">{row.generated_temp_password || "-"}</span>
-                  </div>
-                </td>
-                <td>
-                  <select
-                    value={statusValue(row)}
-                    onChange={(e) => update(index, {
-                      ativo: e.target.value !== "Inativo",
-                      acesso_pendente: e.target.value === "Pendente"
-                    })}
-                  >
-                    <option value="Ativo">Ativo</option>
-                    <option value="Inativo">Inativo</option>
-                    <option value="Pendente">Pendente</option>
-                  </select>
-                </td>
-                <td>
-                  <select
-                    value={row.perfil ?? ""}
-                    onChange={(e) => update(index, { perfil: e.target.value || null, acesso_pendente: !e.target.value })}
-                  >
-                    <option value="">Selecionar cargo</option>
-                    {USER_ROLE_OPTIONS.map((role) => <option key={role} value={role}>{role}</option>)}
-                  </select>
-                </td>
-                <td><button className="icon" onClick={() => onChange(rows.filter((_, i) => i !== index))}>Remover</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <div className="config-workspace">
+      <aside className="config-list-panel">
+        <div className="config-list-header">
+          <div>
+            <h3>Usuários</h3>
+            <p>Crie acessos, ajuste cargo e status e gere senha temporária sem depender de uma grade gigante.</p>
+          </div>
+          <button type="button" onClick={addUser}>Adicionar usuário</button>
+        </div>
+        <div className="config-list-tools">
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nome, email ou cargo" />
+        </div>
+        <div className="config-record-list">
+          {visibleRows.length ? visibleRows.map((row) => {
+            const recordKey = String(row.id ?? row._tempKey ?? "");
+            const active = selectedKey === recordKey;
+            return (
+              <button key={recordKey} type="button" className={active ? "config-record-item active" : "config-record-item"} onClick={() => setSelectedKey(recordKey)}>
+                <strong>{row.nome || row.email || row.usuario || "Novo usuário"}</strong>
+                <span>{row.email || row.usuario || "Sem login"} · {row.perfil || statusValue(row)}</span>
+              </button>
+            );
+          }) : <div className="empty">Nenhum usuário encontrado.</div>}
+        </div>
+      </aside>
+      <section className="config-form-panel">
+        {selectedRow ? (
+          <>
+            <div className="config-form-header">
+              <div>
+                <h3>{selectedRow.nome || selectedRow.email || selectedRow.usuario || "Novo usuário"}</h3>
+                <p>Defina o acesso, gere a senha temporária e remova apenas quando tiver certeza.</p>
+              </div>
+              <button type="button" className="danger" onClick={() => remove(selectedRecordKey)}>Remover usuário</button>
+            </div>
+            <div className="form-grid">
+              <label>E-mail / login
+                <input value={selectedRow.email ?? selectedRow.usuario ?? ""} onChange={(e) => update(selectedRecordKey, { email: e.target.value, usuario: e.target.value })} />
+              </label>
+              <label>Nome
+                <input value={selectedRow.nome ?? ""} onChange={(e) => update(selectedRecordKey, { nome: e.target.value })} />
+              </label>
+              <label>Cargo
+                <select
+                  value={selectedRow.perfil ?? ""}
+                  onChange={(e) => update(selectedRecordKey, { perfil: e.target.value || null, acesso_pendente: !e.target.value })}
+                >
+                  <option value="">Selecionar cargo</option>
+                  {USER_ROLE_OPTIONS.map((role) => <option key={role} value={role}>{role}</option>)}
+                </select>
+              </label>
+              <label>Status
+                <select
+                  value={statusValue(selectedRow)}
+                  onChange={(e) => update(selectedRecordKey, {
+                    ativo: e.target.value !== "Inativo",
+                    acesso_pendente: e.target.value === "Pendente"
+                  })}
+                >
+                  <option value="Ativo">Ativo</option>
+                  <option value="Inativo">Inativo</option>
+                  <option value="Pendente">Pendente</option>
+                </select>
+              </label>
+              <div className="password-reset-card">
+                <strong>Senha temporária</strong>
+                <span>{selectedRow.generated_temp_password || "Nenhuma senha gerada nesta edição."}</span>
+                <button className="icon" type="button" onClick={() => resetPassword(selectedRecordKey)}>Gerar senha</button>
+              </div>
+              <label className="toggle-card">
+                <span>Trocar senha no próximo acesso</span>
+                <input type="checkbox" checked={Boolean(selectedRow.trocar_senha_obrigatorio)} onChange={(e) => update(selectedRecordKey, { trocar_senha_obrigatorio: e.target.checked })} />
+              </label>
+            </div>
+          </>
+        ) : (
+          <div className="empty">Escolha um usuário da lista ou clique em adicionar para começar.</div>
+        )}
+      </section>
     </div>
   );
 }
