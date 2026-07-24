@@ -59,6 +59,9 @@ nav button.active { background: #dbeafe; color: #1e3a8a; }
 .choice-pill { display: inline-flex; grid-template-columns: auto; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid #b9cdfd; border-radius: 999px; background: #f8fbff; font-size: 13px; }
 .choice-pill input { width: auto; }
 .course-summary { padding: 10px 12px; border: 1px solid #d6e0ea; border-radius: 12px; background: #f8fafc; color: #475467; font-weight: 700; }
+.legend-card { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid #bfdbfe; border-radius: 12px; background: linear-gradient(135deg, #f8fbff, #eef6ff); }
+.legend-card strong { font-size: 14px; }
+.legend-grid { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 8px 14px; color: #475467; font-size: 13px; font-weight: 700; }
 .filters-bar { display: grid; grid-template-columns: minmax(180px, 260px) minmax(220px, 1fr); gap: 12px; margin-bottom: 18px; padding: 16px; border: 1px solid #d6e0ea; border-radius: 14px; background: rgba(255,255,255,.92); }
 .detail-panel { display: grid; gap: 18px; margin-top: 20px; }
 .detail-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px; border: 1px solid #d6e0ea; border-radius: 14px; background: rgba(255,255,255,.94); }
@@ -116,6 +119,7 @@ td input { min-width: 160px; padding: 8px; border-radius: 8px; }
   .sidebar { position: relative; height: auto; }
   .content { padding: 24px; }
   .cards-grid, .form-grid, .inline-form, .filters-bar, .detail-grid, .config-workspace { grid-template-columns: 1fr; }
+  .legend-grid { grid-template-columns: 1fr; }
   .action-row { flex-direction: column; }
   .action-row button { width: 100%; }
   .detail-header { align-items: stretch; flex-direction: column; }

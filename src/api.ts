@@ -457,6 +457,19 @@ function throwDb(error: any) {
   if (error) throw new Error(error.message || "Erro no Supabase.");
 }
 
+async function adjustCourseStock(db: ReturnType<typeof ensureSupabase>, courseId: number, delta: number) {
+  const { data: course, error } = await db.from("cursos").select("id,estoque_total").eq("id", courseId).single();
+  throwDb(error);
+  const currentStock = Number(course?.estoque_total ?? 0);
+  const nextStock = currentStock + delta;
+  if (nextStock < 0) {
+    throw new Error("Este curso nao possui vagas disponiveis no estoque.");
+  }
+  const { error: updateError } = await db.from("cursos").update({ estoque_total: nextStock }).eq("id", courseId);
+  throwDb(updateError);
+  return nextStock;
+}
+
 const flaskApi = {
   login: (usuario: string, senha: string) =>
     request<{ user: User }>("/api/login", { method: "POST", body: JSON.stringify({ usuario, senha }) }),
@@ -776,6 +789,7 @@ const supabaseApi = {
     );
     const statusInicial = STATUS_VALIDACAO;
     const etapaInicial = "Administrativo";
+    let stockReserved = false;
 
     const insertPayload = {
       protocolo,
@@ -793,50 +807,66 @@ const supabaseApi = {
       observacao: payload.observacao || ""
     };
 
-    const { error: protocolError } = await db.from("protocolos").insert(insertPayload);
-    throwDb(protocolError);
+    try {
+      if (payload.curso_id) {
+        await adjustCourseStock(db, Number(payload.curso_id), -1);
+        stockReserved = true;
+      }
 
-    const { error: historyError } = await db.from("historico_fluxo").insert({
-      protocolo,
-      status_anterior: "",
-      status_novo: statusInicial,
-      usuario: payload.usuario || "admin",
-      data_movimento: dataMov,
-      observacao: payload.observacao || ""
-    });
-    throwDb(historyError);
+      const { error: protocolError } = await db.from("protocolos").insert(insertPayload);
+      throwDb(protocolError);
 
-    if (respostas.length) {
-      const { error: answersError } = await db.from("respostas_curso").insert(
-        respostas.map((row: Row) => ({
-          protocolo,
-          pergunta_id: row.pergunta_id,
-          pergunta: row.pergunta,
-          resposta: row.resposta,
-          pontuacao: row.pontuacao || 0,
-          data_resposta: dataMov
-        }))
+      const { error: historyError } = await db.from("historico_fluxo").insert({
+        protocolo,
+        status_anterior: "",
+        status_novo: statusInicial,
+        usuario: payload.usuario || "admin",
+        data_movimento: dataMov,
+        observacao: payload.observacao || ""
+      });
+      throwDb(historyError);
+
+      if (respostas.length) {
+        const { error: answersError } = await db.from("respostas_curso").insert(
+          respostas.map((row: Row) => ({
+            protocolo,
+            pergunta_id: row.pergunta_id,
+            pergunta: row.pergunta,
+            resposta: row.resposta,
+            pontuacao: row.pontuacao || 0,
+            data_resposta: dataMov
+          }))
+        );
+        throwDb(answersError);
+      }
+
+      const rowForNotification: Row = {
+        ...insertPayload,
+        entidade: payload.entidade || "",
+        curso: payload.curso || "",
+        cnpj: payload.cnpj || ""
+      };
+      const recipients = await fetchStageRecipients(db, rowForNotification, statusInicial, etapaInicial);
+      const { assunto, corpo } = buildApprovalNotification(
+        rowForNotification,
+        statusInicial,
+        etapaInicial,
+        String(payload.observacao || ""),
+        false
       );
-      throwDb(answersError);
+      await queueNotifications(db, protocolo, recipients, assunto, corpo);
+
+      return { message: "Protocolo criado.", protocolo };
+    } catch (error) {
+      if (stockReserved && payload.curso_id) {
+        try {
+          await adjustCourseStock(db, Number(payload.curso_id), 1);
+        } catch {
+          // Keep the original error when stock rollback also fails.
+        }
+      }
+      throw error;
     }
-
-    const rowForNotification: Row = {
-      ...insertPayload,
-      entidade: payload.entidade || "",
-      curso: payload.curso || "",
-      cnpj: payload.cnpj || ""
-    };
-    const recipients = await fetchStageRecipients(db, rowForNotification, statusInicial, etapaInicial);
-    const { assunto, corpo } = buildApprovalNotification(
-      rowForNotification,
-      statusInicial,
-      etapaInicial,
-      String(payload.observacao || ""),
-      false
-    );
-    await queueNotifications(db, protocolo, recipients, assunto, corpo);
-
-    return { message: "Protocolo criado.", protocolo };
   },
 
   async advanceProtocol(protocolo: string, usuario: string, observacao = "", data_agendada = "") {
@@ -902,6 +932,9 @@ const supabaseApi = {
       throw new Error("Este protocolo ja esta encerrado.");
     }
     const dataMov = nowStr();
+    if (row.curso_id) {
+      await adjustCourseStock(db, Number(row.curso_id), 1);
+    }
     const { error: updateError } = await db
       .from("protocolos")
       .update({
