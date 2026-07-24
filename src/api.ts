@@ -27,6 +27,8 @@ export const CADASTRO_OPTIONS = {
   anAtepAteg: ["AN", "ATEP/ATEG"],
   coordenadorTipo: ["Coordenador de Negocio", "Coordenacao de Mercado"],
   naturezaJuridica: ["Associacao", "Cooperativa", "Cooperativa Central"],
+  certificacoesEntidade: ["ADAB", "SIM", "SIM CONSORCIO", "SUSAF", "MAPA", "ANVISA", "DIVISA", "VIGILANCIA MUNICIPAL"],
+  licencasAmbientais: ["Sim", "Nao", "Nao se aplica"],
   ativaDinamica: ["Ativa", "Dinamica"],
   tipologiaBeneficiarios: [
     "Agricultores Familiares",
@@ -56,10 +58,12 @@ const STATUS_EXECUCAO = "Execucao";
 const STATUS_FINALIZADO = "Finalizado";
 const STATUS_CANCELADO = "Cancelado";
 const STATUS_REPROVADO = "Reprovado";
+const STATUS_LISTA_ESPERA = "Lista de Espera";
 
 const STATUS_FLUXO = [
   STATUS_VALIDACAO,
   STATUS_ANALISE,
+  STATUS_LISTA_ESPERA,
   STATUS_AGENDAMENTO,
   STATUS_EXECUCAO,
   STATUS_FINALIZADO,
@@ -193,9 +197,10 @@ async function buildProtocolOsDocument(protocol: Row) {
     ["Responsavel atual", protocol.responsavel_atual, "Etapa atual", protocol.etapa_atual]
   ];
   const entidadeRows: Array<[string, unknown, string, unknown]> = [
-    ["CNPJ", protocol.cnpj, "Municipio", protocol.municipio_entidade],
-    ["Territorio", protocol.territorio_identidade, "Endereco", protocol.endereco],
-    ["Telefone", protocol.telefone, "Email responsavel", protocol.email_responsavel]
+    ["Entidade", protocol.entidade, "CNPJ", protocol.cnpj],
+    ["Municipio", protocol.municipio_entidade, "Territorio", protocol.territorio_identidade],
+    ["Endereco", protocol.endereco, "Telefone", protocol.telefone],
+    ["Email responsavel", protocol.email_responsavel, "Certificacao", protocol.certificacao]
   ];
   const renderTable = (tableRows: Array<[string, unknown, string, unknown]>) =>
     tableRows
@@ -480,6 +485,10 @@ const flaskApi = {
     request<any>(`/api/protocols/${protocolo}/advance`, { method: "POST", body: JSON.stringify({ usuario, observacao, data_agendada }) }),
   cancelProtocol: (protocolo: string, usuario: string, observacao = "") =>
     request<any>(`/api/protocols/${protocolo}/cancel`, { method: "POST", body: JSON.stringify({ usuario, observacao }) }),
+  rejectProtocol: (protocolo: string, usuario: string, observacao = "") =>
+    request<any>(`/api/protocols/${protocolo}/cancel`, { method: "POST", body: JSON.stringify({ usuario, observacao: `[REPROVADO] ${observacao}`.trim() }) }),
+  waitlistProtocol: (protocolo: string, usuario: string, observacao = "") =>
+    request<any>(`/api/protocols/${protocolo}/cancel`, { method: "POST", body: JSON.stringify({ usuario, observacao: `[LISTA DE ESPERA] ${observacao}`.trim() }) }),
   forms: (protocolo: string) => request<any>(`/api/forms/${protocolo}`),
   downloadOs: async (protocolo: string) => {
     const url = `${apiBaseUrl}/api/protocols/${protocolo}/os`;
@@ -916,6 +925,89 @@ const supabaseApi = {
     const { assunto, corpo } = buildApprovalNotification(row, STATUS_CANCELADO, STATUS_CANCELADO, observacao, true);
     await queueNotifications(db, protocolo, recipients, assunto, corpo);
     return { message: "Protocolo cancelado.", status: STATUS_CANCELADO };
+  },
+
+  async rejectProtocol(protocolo: string, usuario: string, observacao = "") {
+    const db = ensureSupabase();
+    const { data: protocol, error } = await db
+      .from("protocolos")
+      .select("*, entidades(entidade,cnpj,nivel), cursos(curso)")
+      .eq("protocolo", protocolo)
+      .single();
+    throwDb(error);
+    const row = {
+      ...protocol,
+      entidade: (protocol as any).entidades?.entidade,
+      cnpj: (protocol as any).entidades?.cnpj,
+      nivel_entidade: (protocol as any).entidades?.nivel,
+      curso: (protocol as any).cursos?.curso
+    } as Row;
+    const dataMov = nowStr();
+    const { error: updateError } = await db
+      .from("protocolos")
+      .update({
+        status: STATUS_REPROVADO,
+        etapa_atual: STATUS_REPROVADO,
+        responsavel_atual: STATUS_REPROVADO,
+        data_atualizacao: dataMov
+      })
+      .eq("protocolo", protocolo);
+    throwDb(updateError);
+    const { error: historyError } = await db.from("historico_fluxo").insert({
+      protocolo,
+      status_anterior: row.status,
+      status_novo: STATUS_REPROVADO,
+      usuario,
+      data_movimento: dataMov,
+      observacao
+    });
+    throwDb(historyError);
+    const recipients = await fetchNotificationRecipients(db, row, true);
+    const { assunto, corpo } = buildApprovalNotification(row, STATUS_REPROVADO, STATUS_REPROVADO, observacao, true);
+    await queueNotifications(db, protocolo, recipients, assunto, corpo);
+    return { message: "Protocolo reprovado.", status: STATUS_REPROVADO };
+  },
+
+  async waitlistProtocol(protocolo: string, usuario: string, observacao = "") {
+    const db = ensureSupabase();
+    const { data: protocol, error } = await db
+      .from("protocolos")
+      .select("*, entidades(entidade,cnpj,nivel), cursos(curso)")
+      .eq("protocolo", protocolo)
+      .single();
+    throwDb(error);
+    const row = {
+      ...protocol,
+      entidade: (protocol as any).entidades?.entidade,
+      cnpj: (protocol as any).entidades?.cnpj,
+      nivel_entidade: (protocol as any).entidades?.nivel,
+      curso: (protocol as any).cursos?.curso
+    } as Row;
+    const dataMov = nowStr();
+    const { error: updateError } = await db
+      .from("protocolos")
+      .update({
+        status: STATUS_LISTA_ESPERA,
+        etapa_atual: STATUS_LISTA_ESPERA,
+        responsavel_atual: STATUS_LISTA_ESPERA,
+        data_atualizacao: dataMov,
+        observacao
+      })
+      .eq("protocolo", protocolo);
+    throwDb(updateError);
+    const { error: historyError } = await db.from("historico_fluxo").insert({
+      protocolo,
+      status_anterior: row.status,
+      status_novo: STATUS_LISTA_ESPERA,
+      usuario,
+      data_movimento: dataMov,
+      observacao
+    });
+    throwDb(historyError);
+    const recipients = await fetchNotificationRecipients(db, row, true);
+    const { assunto, corpo } = buildApprovalNotification(row, STATUS_LISTA_ESPERA, STATUS_LISTA_ESPERA, observacao, true);
+    await queueNotifications(db, protocolo, recipients, assunto, corpo);
+    return { message: "Protocolo enviado para lista de espera.", status: STATUS_LISTA_ESPERA };
   },
 
   async forms(protocolo: string) {

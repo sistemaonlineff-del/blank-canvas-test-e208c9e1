@@ -6,6 +6,7 @@ import logo2 from "../assets/logo_2.jpeg";
 import "./styles.css";
 
 type Page = "home" | "qualificacao" | "cursos" | "status" | "aprovacoes" | "entidades" | "config";
+type AnswerValue = string | string[];
 
 const pageLabels: Record<Page, string> = {
   home: "Tela principal",
@@ -305,6 +306,37 @@ function allowedLevels(nivel: any) {
 
 type QuestionOption = { label: string; points: number };
 
+function normalizeText(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function isSealCertificationQuestion(question: Row) {
+  const secao = normalizeText(question.secao);
+  const subsecao = normalizeText(question.subsecao);
+  const codigo = normalizeText(question.codigo_pergunta);
+  const pergunta = normalizeText(question.pergunta);
+  return (
+    secao.includes("selos e certificacoes") ||
+    codigo.includes("selo de inspecao") ||
+    pergunta.includes("selo de inspecao") ||
+    (subsecao === "5.1" && (pergunta === "multipla" || !pergunta))
+  );
+}
+
+function questionPrompt(question: Row, kind: "geral" | "bpf" | "curso") {
+  if (kind === "bpf" && isSealCertificationQuestion(question)) {
+    return "A agroindústria está regularizada com qual selo de inspeção?";
+  }
+  if (kind === "bpf" && normalizeText(question.pergunta) === "multipla" && question.codigo_pergunta) {
+    return String(question.codigo_pergunta);
+  }
+  return String(question.pergunta || question.codigo_pergunta || "");
+}
+
 function questionOptions(question: Row, kind: "geral" | "bpf" | "curso"): QuestionOption[] {
   if (kind === "geral") {
     const options = [1, 2, 3]
@@ -313,6 +345,9 @@ function questionOptions(question: Row, kind: "geral" | "bpf" | "curso"): Questi
     return options.length ? options : [{ label: "Não", points: 0 }, { label: "Sim", points: Number(question.pontos_sim || 1) }];
   }
   if (kind === "bpf") {
+    if (isSealCertificationQuestion(question)) {
+      return ["SIM", "SIE", "ANVISA", "MAPA"].map((label) => ({ label, points: Number(question.pontos_sim || 1) }));
+    }
     const labels = String(question.opcoes || "S;N;P;NA").split(";").map((item) => item.trim()).filter(Boolean);
     return labels.map((label) => ({ label, points: label === "S" ? Number(question.pontos_sim || 1) : 0 }));
   }
@@ -321,6 +356,18 @@ function questionOptions(question: Row, kind: "geral" | "bpf" | "curso"): Questi
     return alternatives.map((item: Row) => ({ label: String(item.alternativa || ""), points: Number(item.pontos || 0) }));
   }
   return [{ label: "Não", points: 0 }, { label: "Sim", points: Number(question.pontos_sim || 1) }];
+}
+
+function defaultAnswerValue(question: Row, kind: "geral" | "bpf" | "curso"): AnswerValue {
+  if (kind === "bpf" && isSealCertificationQuestion(question)) return [];
+  return questionOptions(question, kind)[0]?.label || "";
+}
+
+function answerPoints(question: Row, kind: "geral" | "bpf" | "curso", answer: AnswerValue) {
+  if (Array.isArray(answer)) {
+    return answer.length ? Number(question.pontos_sim || 1) : 0;
+  }
+  return questionOptions(question, kind).find((option) => option.label === answer)?.points || 0;
 }
 
 function groupedRows(rows: Row[], key: string) {
@@ -332,16 +379,34 @@ function groupedRows(rows: Row[], key: string) {
   }, {});
 }
 
-function QuestionRow({ question, kind, value, onChange }: { question: Row; kind: "geral" | "bpf" | "curso"; value: string; onChange: (value: string) => void }) {
+function QuestionRow({ question, kind, value, onChange }: { question: Row; kind: "geral" | "bpf" | "curso"; value: AnswerValue; onChange: (value: AnswerValue) => void }) {
   const options = questionOptions(question, kind);
-  const title = kind === "bpf" && question.codigo_pergunta ? `${question.codigo_pergunta} - ${question.pergunta}` : question.pergunta;
+  const multipleChoice = kind === "bpf" && isSealCertificationQuestion(question);
+  const currentValues = Array.isArray(value) ? value : [];
+  const title = kind === "bpf" && question.codigo_pergunta && normalizeText(question.pergunta) !== "multipla"
+    ? `${question.codigo_pergunta} - ${question.pergunta}`
+    : questionPrompt(question, kind);
   return (
     <fieldset className="question-row">
       <legend>{title}</legend>
       <div className="choice-row">
         {options.map((option) => (
           <label key={option.label} className="choice-pill">
-            <input type="radio" checked={value === option.label} onChange={() => onChange(option.label)} />
+            <input
+              type={multipleChoice ? "checkbox" : "radio"}
+              checked={multipleChoice ? currentValues.includes(option.label) : value === option.label}
+              onChange={() => {
+                if (multipleChoice) {
+                  onChange(
+                    currentValues.includes(option.label)
+                      ? currentValues.filter((item) => item !== option.label)
+                      : [...currentValues, option.label]
+                  );
+                  return;
+                }
+                onChange(option.label);
+              }}
+            />
             <span>{option.label}</span>
           </label>
         ))}
@@ -353,14 +418,14 @@ function QuestionRow({ question, kind, value, onChange }: { question: Row; kind:
 function QualificationQuestionForm({ kind, pending, onSaved }: { kind: "geral" | "bpf"; pending: Row[]; onSaved: (message: string) => void }) {
   const questions = useAsync(() => api.questions(kind), [kind]);
   const [entidadeId, setEntidadeId] = useState<number | "">("");
-  const [answers, setAnswers] = useState<Row>({});
+  const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
   const [submitError, setSubmitError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    const next: Row = {};
+    const next: Record<string, AnswerValue> = {};
     (questions.data?.items || []).forEach((question) => {
-      next[question.id] = questionOptions(question, kind)[0]?.label || "";
+      next[question.id] = defaultAnswerValue(question, kind);
     });
     setAnswers(next);
     setSubmitError("");
@@ -373,9 +438,10 @@ function QualificationQuestionForm({ kind, pending, onSaved }: { kind: "geral" |
     setSubmitting(true);
     try {
       const respostas = (questions.data?.items || []).map((question) => {
-        const resposta = answers[question.id] || questionOptions(question, kind)[0]?.label || "";
-        const pontuacao = questionOptions(question, kind).find((option) => option.label === resposta)?.points || 0;
-        return { questionario: question.questionario, pergunta_id: question.id, pergunta: question.pergunta, resposta, pontuacao };
+        const answer = answers[question.id] ?? defaultAnswerValue(question, kind);
+        const resposta = Array.isArray(answer) ? answer.join("; ") : answer;
+        const pontuacao = answerPoints(question, kind, answer);
+        return { questionario: question.questionario, pergunta_id: question.id, pergunta: questionPrompt(question, kind), resposta, pontuacao };
       });
       const result = kind === "geral" ? await api.saveGeneral(Number(entidadeId), respostas) : await api.saveBpf(Number(entidadeId), respostas);
       onSaved(`${result.message}${result.nivel ? ` Nível: ${result.nivel}. Pontuação: ${result.pontuacao}.` : ""}`);
@@ -555,6 +621,27 @@ function QualificacaoPage() {
             </label>
             <label>Email
               <input value={fields.email_responsavel || ""} onChange={(e) => setFields({ ...fields, email_responsavel: e.target.value })} />
+            </label>
+            <label>Municipio da Entidade
+              <input value={fields.municipio_entidade || ""} onChange={(e) => setFields({ ...fields, municipio_entidade: e.target.value })} />
+            </label>
+            <label>Certificacao
+              <select value={fields.certificacao || ""} onChange={(e) => setFields({ ...fields, certificacao: e.target.value })}>
+                <option value="">Selecionar</option>
+                {CADASTRO_OPTIONS.certificacoesEntidade.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+            <label>Licenca ambiental
+              <select value={fields.licenca_ambiental || ""} onChange={(e) => setFields({ ...fields, licenca_ambiental: e.target.value })}>
+                <option value="">Selecionar</option>
+                {CADASTRO_OPTIONS.licencasAmbientais.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+            <label>Telefone
+              <input value={fields.telefone || ""} onChange={(e) => setFields({ ...fields, telefone: e.target.value })} />
+            </label>
+            <label>Endereco
+              <input value={fields.endereco || ""} onChange={(e) => setFields({ ...fields, endereco: e.target.value })} />
             </label>
             <label>Tipologia de Beneficiários
               <select value={fields.tipologia_beneficiarios || ""} onChange={(e) => setFields({ ...fields, tipologia_beneficiarios: e.target.value, comunidade_tradicional: "" })}>
@@ -844,6 +931,38 @@ function AprovacoesPageV2({ user, onDone }: { user: User; onDone: () => void }) 
     }
   }
 
+  async function reject(observacao: string) {
+    if (!selected) return;
+    setSubmitting(true);
+    setErrorMessage("");
+    setMessage("");
+    try {
+      const result = await api.rejectProtocol(selected, user.usuario, observacao);
+      setMessage(result.message || "Protocolo reprovado.");
+      setSelected("");
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erro ao reprovar o protocolo.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function waitlist(observacao: string) {
+    if (!selected) return;
+    setSubmitting(true);
+    setErrorMessage("");
+    setMessage("");
+    try {
+      const result = await api.waitlistProtocol(selected, user.usuario, observacao);
+      setMessage(result.message || "Protocolo enviado para lista de espera.");
+      setSelected("");
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erro ao enviar o protocolo para lista de espera.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <PageBlock title="Minhas Aprovações">
       {message && <div className="alert success">{message}</div>}
@@ -856,7 +975,7 @@ function AprovacoesPageV2({ user, onDone }: { user: User; onDone: () => void }) 
           {filtered.map((row) => <option key={row.protocolo} value={row.protocolo}>{row.protocolo} · {row.entidade} · {row.status}</option>)}
         </select>
       </div>
-      {selected && <ProtocolDetails row={selectedRow} forms={forms.data} approval user={user} onAdvance={advance} onCancel={cancel} busy={submitting} />}
+      {selected && <ProtocolDetails row={selectedRow} forms={forms.data} approval user={user} onAdvance={advance} onCancel={cancel} onReject={reject} onWaitlist={waitlist} busy={submitting} />}
     </PageBlock>
   );
 }
@@ -1094,6 +1213,7 @@ function actionLabel(status: string) {
   if (key.includes("agendamento")) return "Enviar agendamento";
   if (key.includes("execucao")) return "Finalizar";
   if (key.includes("analise")) return "Enviar para Agendamento";
+  if (key.includes("validacao")) return "Aprovar e enviar para Analise Tecnica";
   return "Enviar";
 }
 
@@ -1122,7 +1242,7 @@ function ResponseSection({ title, rows, empty }: { title: string; rows: Row[]; e
   );
 }
 
-function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCancel, busy = false }: { row: Row | undefined; forms: any; approval?: boolean; user?: User; onAdvance?: (observacao: string, dataAgendada: string) => Promise<void>; onCancel?: (observacao: string) => Promise<void>; busy?: boolean }) {
+function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCancel, onReject, onWaitlist, busy = false }: { row: Row | undefined; forms: any; approval?: boolean; user?: User; onAdvance?: (observacao: string, dataAgendada: string) => Promise<void>; onCancel?: (observacao: string) => Promise<void>; onReject?: (observacao: string) => Promise<void>; onWaitlist?: (observacao: string) => Promise<void>; busy?: boolean }) {
   const [observacao, setObservacao] = useState("");
   const [dataAgendada, setDataAgendada] = useState("");
   const [osError, setOsError] = useState("");
@@ -1132,6 +1252,7 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
   const finalizado = ["Finalizado", "Cancelado", "Reprovado"].includes(String(currentRow.status || ""));
   const statusKey = String(currentRow.status || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const canDownloadOs = ["agendamento", "execucao", "finalizado"].includes(statusKey);
+  const needsDecisionButtons = ["validacao administrativa", "analise tecnica"].includes(statusKey);
 
   async function downloadOs() {
     setOsError("");
@@ -1186,7 +1307,14 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
             <button onClick={() => onAdvance?.(observacao, dataAgendada)} disabled={busy || !user || (String(currentRow.status || "") === "Agendamento" && !dataAgendada)}>
               {busy ? "Enviando..." : actionLabel(String(currentRow.status || ""))}
             </button>
-            <button className="danger" onClick={() => onCancel?.(observacao)} disabled={busy || !user}>Cancelar</button>
+            {needsDecisionButtons ? (
+              <>
+                <button className="warning-button" onClick={() => onWaitlist?.(observacao)} disabled={busy || !user}>Lista de espera</button>
+                <button className="danger" onClick={() => onReject?.(observacao)} disabled={busy || !user}>Reprovar</button>
+              </>
+            ) : (
+              <button className="danger" onClick={() => onCancel?.(observacao)} disabled={busy || !user}>Cancelar</button>
+            )}
           </div>
         </div>
       )}

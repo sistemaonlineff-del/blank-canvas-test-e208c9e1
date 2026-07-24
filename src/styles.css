@@ -74,6 +74,7 @@ nav button.active { background: #dbeafe; color: #1e3a8a; }
 .action-row { display: flex; justify-content: flex-end; gap: 12px; }
 .action-row button { width: 180px; }
 button.danger { border-color: #fecaca; background: #fee2e2; color: #991b1b; }
+button.warning-button { border-color: #fcd34d; background: #fef3c7; color: #92400e; }
 .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
 .tabs button { border-radius: 999px; }
 .tabs button.active { background: #dbeafe; color: #1e3a8a; }
