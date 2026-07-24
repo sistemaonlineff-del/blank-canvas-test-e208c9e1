@@ -58,6 +58,25 @@ nav button.active { background: #dbeafe; color: #1e3a8a; }
 .choice-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .choice-pill { display: inline-flex; grid-template-columns: auto; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid #b9cdfd; border-radius: 999px; background: #f8fbff; font-size: 13px; }
 .choice-pill input { width: auto; }
+.entity-picker { display: grid; gap: 10px; }
+.entity-picker-header { display: grid; gap: 4px; }
+.entity-picker-header span { font-size: 13px; font-weight: 800; color: #0f172a; }
+.entity-picker-header small { color: #667085; font-size: 12px; line-height: 1.4; }
+.entity-combobox { position: relative; display: flex; align-items: center; gap: 10px; padding: 0 12px; border: 1px solid #d6e0ea; border-radius: 14px; background: linear-gradient(180deg, #ffffff, #f8fbff); box-shadow: inset 0 1px 0 rgba(255,255,255,.8); }
+.entity-combobox.open { border-color: #60a5fa; box-shadow: 0 0 0 4px rgba(96,165,250,.14); }
+.entity-combobox input { border: 0; padding: 14px 0; background: transparent; box-shadow: none; }
+.entity-combobox input:focus { outline: none; }
+.entity-combobox-icon { color: #64748b; flex: 0 0 auto; }
+.entity-combobox-clear { flex: 0 0 auto; border: 0; background: #eff6ff; color: #1d4ed8; border-radius: 999px; padding: 7px 10px; font-size: 12px; font-weight: 800; box-shadow: none; }
+.entity-combobox-menu { margin-top: -2px; padding: 8px; border: 1px solid #d6e0ea; border-radius: 16px; background: rgba(255,255,255,.98); box-shadow: 0 22px 44px rgba(15,23,42,.12); max-height: 280px; overflow: auto; }
+.entity-combobox-option { width: 100%; text-align: left; display: grid; gap: 4px; padding: 12px 14px; border: 0; border-radius: 12px; background: transparent; box-shadow: none; }
+.entity-combobox-option:hover, .entity-combobox-option.active { background: linear-gradient(135deg, #eff6ff, #ecfdf5); }
+.entity-combobox-option strong { font-size: 13px; color: #0f172a; }
+.entity-combobox-option span, .entity-combobox-empty { color: #667085; font-size: 12px; }
+.entity-combobox-empty { padding: 14px; border-radius: 12px; background: #f8fafc; }
+.entity-selection-card { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid #bfdbfe; border-radius: 14px; background: linear-gradient(135deg, #f8fbff, #eff6ff); }
+.entity-selection-card strong { font-size: 14px; color: #0f172a; }
+.entity-selection-card span { color: #475467; font-size: 12px; font-weight: 700; }
 .course-summary { padding: 10px 12px; border: 1px solid #d6e0ea; border-radius: 12px; background: #f8fafc; color: #475467; font-weight: 700; }
 .legend-card { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid #bfdbfe; border-radius: 12px; background: linear-gradient(135deg, #f8fbff, #eef6ff); }
 .legend-card strong { font-size: 14px; }

@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useState } from "react";
+import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Database, FileText, Home, LogOut, RefreshCw, Search, Settings, UserPlus } from "lucide-react";
 import { api, CADASTRO_OPTIONS, Row, User, USER_ROLE_OPTIONS } from "./api";
 import logo1 from "../assets/logo_1.jpeg";
@@ -415,10 +415,142 @@ function QuestionRow({ question, kind, value, onChange }: { question: Row; kind:
   );
 }
 
+function entityOptionLabel(item: Row) {
+  const parts = [item.entidade, item.cnpj ? `CNPJ ${item.cnpj}` : "", item.nivel ? `Nivel ${item.nivel}` : ""].filter(Boolean);
+  return parts.join(" • ");
+}
+
+function EntitySearchField({
+  label,
+  items,
+  value,
+  onChange,
+  placeholder = "Digite para buscar e selecionar",
+  helperText,
+  emptyText = "Nenhuma entidade encontrada."
+}: {
+  label: string;
+  items: Row[];
+  value: number | "" | null;
+  onChange: (item: Row | null) => void;
+  placeholder?: string;
+  helperText?: string;
+  emptyText?: string;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const blurTimer = useRef<number | null>(null);
+  const selectedItem = items.find((item) => String(item.id) === String(value || "")) || null;
+
+  useEffect(() => {
+    setQuery(selectedItem ? entityOptionLabel(selectedItem) : "");
+  }, [selectedItem?.id]);
+
+  useEffect(() => () => {
+    if (blurTimer.current) window.clearTimeout(blurTimer.current);
+  }, []);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredItems = items.filter((item) => {
+    if (!normalizedQuery) return true;
+    return [item.entidade, item.cnpj, item.id, item.nivel]
+      .filter(Boolean)
+      .some((field) => String(field).toLowerCase().includes(normalizedQuery));
+  });
+
+  function handleFocus() {
+    if (blurTimer.current) {
+      window.clearTimeout(blurTimer.current);
+      blurTimer.current = null;
+    }
+    setOpen(true);
+  }
+
+  function handleBlur() {
+    blurTimer.current = window.setTimeout(() => {
+      setOpen(false);
+      setQuery(selectedItem ? entityOptionLabel(selectedItem) : "");
+    }, 120);
+  }
+
+  function selectItem(item: Row) {
+    if (blurTimer.current) {
+      window.clearTimeout(blurTimer.current);
+      blurTimer.current = null;
+    }
+    onChange(item);
+    setQuery(entityOptionLabel(item));
+    setOpen(false);
+  }
+
+  return (
+    <div className="entity-picker">
+      <div className="entity-picker-header">
+        <span>{label}</span>
+        {helperText && <small>{helperText}</small>}
+      </div>
+      <div className={`entity-combobox${open ? " open" : ""}`}>
+        <Search size={16} className="entity-combobox-icon" />
+        <input
+          value={query}
+          placeholder={placeholder}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+            onChange(null);
+          }}
+        />
+        {selectedItem && (
+          <button
+            type="button"
+            className="entity-combobox-clear"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              onChange(null);
+              setQuery("");
+              setOpen(true);
+            }}
+          >
+            Limpar
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="entity-combobox-menu">
+          {filteredItems.length ? filteredItems.map((item) => {
+            const active = String(item.id) === String(selectedItem?.id || "");
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`entity-combobox-option${active ? " active" : ""}`}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  selectItem(item);
+                }}
+              >
+                <strong>{item.entidade}</strong>
+                <span>{item.cnpj || "Sem CNPJ"}{item.nivel ? ` • Nivel ${item.nivel}` : ""}</span>
+              </button>
+            );
+          }) : <div className="entity-combobox-empty">{emptyText}</div>}
+        </div>
+      )}
+      {selectedItem && (
+        <div className="entity-selection-card">
+          <strong>{selectedItem.entidade}</strong>
+          <span>ID {selectedItem.id}{selectedItem.cnpj ? ` • ${selectedItem.cnpj}` : ""}{selectedItem.nivel ? ` • Nivel ${selectedItem.nivel}` : ""}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function QualificationQuestionForm({ kind, pending, onSaved }: { kind: "geral" | "bpf"; pending: Row[]; onSaved: (message: string) => void }) {
   const questions = useAsync(() => api.questions(kind), [kind]);
   const [entidadeId, setEntidadeId] = useState<number | "">("");
-  const [entitySearch, setEntitySearch] = useState("");
   const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
   const [submitError, setSubmitError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -460,26 +592,16 @@ function QualificationQuestionForm({ kind, pending, onSaved }: { kind: "geral" |
   if (!questions.data?.items.length) return <div className="empty">Nenhuma pergunta cadastrada para este formulário.</div>;
 
   const groups = groupedRows(questions.data.items, kind === "geral" ? "questionario" : "secao");
-  const filteredPending = pending.filter((item) => {
-    const search = entitySearch.trim().toLowerCase();
-    if (!search) return true;
-    return [item.entidade, item.cnpj, item.id]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(search));
-  });
   return (
     <form className="panel" onSubmit={submit}>
-      <label>{kind === "geral" ? "Entidade aguardando Formulario Geral" : "Entidade aguardando BPF"}
-        <input
-          placeholder="Buscar entidade por nome, CNPJ ou codigo"
-          value={entitySearch}
-          onChange={(e) => setEntitySearch(e.target.value)}
-        />
-        <select value={entidadeId} onChange={(e) => setEntidadeId(Number(e.target.value) || "")}>
-          <option value="">Selecionar</option>
-          {filteredPending.map((item) => <option key={item.id} value={item.id}>{item.id} | {item.entidade} | {item.cnpj || "Sem CNPJ"}</option>)}
-        </select>
-      </label>
+      <EntitySearchField
+        label={kind === "geral" ? "Entidade aguardando Formulario Geral" : "Entidade aguardando BPF"}
+        items={pending}
+        value={entidadeId}
+        helperText="Busque por nome, CNPJ, codigo ou nivel e selecione no mesmo campo."
+        emptyText="Nenhuma entidade pendente encontrada."
+        onChange={(item) => setEntidadeId(item ? Number(item.id) : "")}
+      />
       {submitError && <div className="alert error">{submitError}</div>}
       {kind === "bpf" && (
         <div className="legend-card">
@@ -518,7 +640,6 @@ function QualificacaoPage() {
   const [tab, setTab] = useState<"cadastro" | "geral" | "bpf">("cadastro");
   const [selected, setSelected] = useState<Row | null>(null);
   const [fields, setFields] = useState<Row>({});
-  const [entitySearch, setEntitySearch] = useState("");
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [savingCadastro, setSavingCadastro] = useState(false);
@@ -578,13 +699,6 @@ function QualificacaoPage() {
   const showAgenteNegocio = fields.an_atep_ateg === "AN";
   const showAtepAteg = fields.an_atep_ateg === "ATEP/ATEG";
   const showComunidadeTradicional = fields.tipologia_beneficiarios === "Comunidades Tradicionais";
-  const filteredEntities = (options.data?.items || []).filter((item) => {
-    const search = entitySearch.trim().toLowerCase();
-    if (!search) return true;
-    return [item.entidade, item.cnpj, item.id]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(search));
-  });
 
   return (
     <PageBlock title="Qualificar Nova Entidade">
@@ -597,16 +711,14 @@ function QualificacaoPage() {
       {errorMessage && <div className="alert error">{errorMessage}</div>}
       {tab === "cadastro" && (
         <form className="panel" onSubmit={saveCadastro}>
-          <label>Entidade cadastrada na base</label>
-          <input
-            placeholder="Buscar entidade por nome, CNPJ ou codigo"
-            value={entitySearch}
-            onChange={(e) => setEntitySearch(e.target.value)}
+          <EntitySearchField
+            label="Entidade cadastrada na base"
+            items={options.data?.items || []}
+            value={selected?.id || ""}
+            helperText="Digite dentro do campo para encontrar a entidade e selecione na lista dinamica."
+            emptyText="Nenhuma entidade cadastrada corresponde a essa busca."
+            onChange={(item) => setSelected(item)}
           />
-          <select onChange={(e) => setSelected(options.data?.items.find((item) => String(item.id) === e.target.value) || null)} value={selected?.id || ""}>
-            <option value="">Selecionar</option>
-            {filteredEntities.map((item) => <option key={item.id} value={item.id}>{item.id} | {item.entidade} | {item.cnpj || "Sem CNPJ"}</option>)}
-          </select>
           <div className="form-grid">
             <label>Número do Convênio
               <input value={fields.numero_convenio || ""} onChange={(e) => setFields({ ...fields, numero_convenio: e.target.value })} />
@@ -761,20 +873,12 @@ function CursosPageV2({ user }: { user: User }) {
   const courses = useAsync(api.courses, []);
   const [payload, setPayload] = useState<Row>({});
   const [answers, setAnswers] = useState<Row>({});
-  const [entitySearch, setEntitySearch] = useState("");
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const courseQuestions = useAsync(() => payload.curso_id ? api.courseQuestions(Number(payload.curso_id)) : Promise.resolve({ items: [] }), [payload.curso_id]);
   const qualified = (entities.data?.items || []).filter((item) => isConcludedStatus(item.status_qualificacao));
   const selectedEntity = qualified.find((item) => String(item.id) === String(payload.entidade_id));
-  const filteredQualified = qualified.filter((item) => {
-    const search = entitySearch.trim().toLowerCase();
-    if (!search) return true;
-    return [item.entidade, item.cnpj, item.id, item.nivel]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(search));
-  });
   const areas = Array.from(new Set((courses.data?.items || []).map((item) => item.area).filter(Boolean)));
   const availableCourses = (courses.data?.items || []).filter((course) => {
     if (!selectedEntity) return false;
@@ -825,17 +929,14 @@ function CursosPageV2({ user }: { user: User }) {
   return (
     <PageBlock title="Cursos">
       <form className="panel" onSubmit={submit}>
-        <label>Entidade
-          <input
-            placeholder="Buscar entidade por nome, CNPJ, nivel ou codigo"
-            value={entitySearch}
-            onChange={(e) => setEntitySearch(e.target.value)}
-          />
-          <select value={payload.entidade_id || ""} onChange={(e) => setPayload({ entidade_id: Number(e.target.value), area: "", curso_id: "" })}>
-            <option value="">Selecionar</option>
-            {filteredQualified.map((item) => <option key={item.id} value={item.id}>{item.entidade} · {item.nivel}</option>)}
-          </select>
-        </label>
+        <EntitySearchField
+          label="Entidade"
+          items={qualified}
+          value={payload.entidade_id || ""}
+          helperText="Busque por entidade qualificada e selecione no proprio campo."
+          emptyText="Nenhuma entidade qualificada encontrada."
+          onChange={(item) => setPayload({ entidade_id: item ? Number(item.id) : "", area: "", curso_id: "" })}
+        />
         {selectedEntity && <div className="course-summary">Nível da entidade: <strong>{selectedEntity.nivel}</strong></div>}
         <label>Área do curso
           <select value={payload.area || ""} onChange={(e) => setPayload({ ...payload, area: e.target.value, curso_id: "" })} disabled={!selectedEntity}>
