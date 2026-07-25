@@ -285,9 +285,37 @@ function pieSegments(entries: { label: string; value: number; color: string }[])
   }).join(", ");
 }
 
-function DashboardPie({ title, entries, legendTitle }: { title: string; entries: { label: string; value: number; color: string }[]; legendTitle: string }) {
+function polarToCartesian(cx: number, cy: number, radius: number, angleInDegrees: number) {
+  const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180;
+  return {
+    x: cx + radius * Math.cos(angleInRadians),
+    y: cy + radius * Math.sin(angleInRadians)
+  };
+}
+
+function pieSlicePath(startAngle: number, endAngle: number, radius: number) {
+  const start = polarToCartesian(80, 80, radius, endAngle);
+  const end = polarToCartesian(80, 80, radius, startAngle);
+  const largeArcFlag = endAngle - startAngle <= 180 ? 0 : 1;
+  return `M 80 80 L ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArcFlag} 0 ${end.x} ${end.y} Z`;
+}
+
+function DashboardPie({
+  title,
+  entries,
+  legendTitle,
+  selectedLabel,
+  onSelect
+}: {
+  title: string;
+  entries: { label: string; value: number; color: string }[];
+  legendTitle: string;
+  selectedLabel?: string;
+  onSelect?: (label: string) => void;
+}) {
   const filtered = entries.filter((item) => item.value > 0);
   const total = filtered.reduce((sum, item) => sum + item.value, 0) || 1;
+  let currentAngle = 0;
   return (
     <section className="dashboard-card">
       <div className="dashboard-section-header">
@@ -295,16 +323,42 @@ function DashboardPie({ title, entries, legendTitle }: { title: string; entries:
       </div>
       <div className="dashboard-pie-layout">
         <div className="dashboard-pie-wrap">
-          <div className="dashboard-pie" style={{ background: `conic-gradient(${pieSegments(filtered.length ? filtered : [{ label: "Sem dados", value: 1, color: "#cbd5e1" }])})` }} />
+          {filtered.length ? (
+            <svg viewBox="0 0 160 160" className="dashboard-pie-svg" aria-label={title}>
+              {filtered.map((item) => {
+                const startAngle = currentAngle;
+                const endAngle = currentAngle + (item.value / total) * 360;
+                currentAngle = endAngle;
+                const active = selectedLabel === item.label;
+                return (
+                  <path
+                    key={item.label}
+                    d={pieSlicePath(startAngle, endAngle, active ? 75 : 70)}
+                    fill={item.color}
+                    className={`dashboard-pie-slice${active ? " active" : ""}`}
+                    onClick={() => onSelect?.(item.label)}
+                  />
+                );
+              })}
+              <circle cx="80" cy="80" r="33" fill="#fff" />
+            </svg>
+          ) : (
+            <div className="dashboard-pie" style={{ background: `conic-gradient(${pieSegments([{ label: "Sem dados", value: 1, color: "#cbd5e1" }])})` }} />
+          )}
         </div>
         <div className="dashboard-legend">
           <strong>{legendTitle}</strong>
           {filtered.map((item) => (
-            <div key={item.label} className="dashboard-legend-item">
+            <button
+              key={item.label}
+              type="button"
+              className={`dashboard-legend-item${selectedLabel === item.label ? " active" : ""}`}
+              onClick={() => onSelect?.(item.label)}
+            >
               <span className="dashboard-legend-dot" style={{ background: item.color }} />
               <span>{item.label}</span>
               <b>{item.value} ({formatNumber((item.value / total) * 100, 0)}%)</b>
-            </div>
+            </button>
           ))}
           {!filtered.length && <div className="dashboard-empty-inline">Sem dados.</div>}
         </div>
@@ -313,7 +367,17 @@ function DashboardPie({ title, entries, legendTitle }: { title: string; entries:
   );
 }
 
-function DashboardBars({ title, rows }: { title: string; rows: { label: string; value: number }[] }) {
+function DashboardBars({
+  title,
+  rows,
+  selectedLabel,
+  onSelect
+}: {
+  title: string;
+  rows: { label: string; value: number }[];
+  selectedLabel?: string;
+  onSelect?: (label: string) => void;
+}) {
   const max = Math.max(...rows.map((row) => row.value), 1);
   return (
     <section className="dashboard-card">
@@ -322,13 +386,18 @@ function DashboardBars({ title, rows }: { title: string; rows: { label: string; 
       </div>
       <div className="dashboard-bars">
         {rows.map((row) => (
-          <div key={row.label} className="dashboard-bar-row">
+          <button
+            key={row.label}
+            type="button"
+            className={`dashboard-bar-row${selectedLabel === row.label ? " active" : ""}`}
+            onClick={() => onSelect?.(row.label)}
+          >
             <span>{row.label}</span>
             <div className="dashboard-bar-track">
               <div className="dashboard-bar-fill" style={{ width: `${(row.value / max) * 100}%` }} />
             </div>
             <b>{row.value}</b>
-          </div>
+          </button>
         ))}
         {!rows.length && <div className="dashboard-empty-inline">Sem dados suficientes.</div>}
       </div>
@@ -366,11 +435,15 @@ function DashboardWords({ title, rows }: { title: string; rows: { label: string;
 function DashboardPage({ user }: { user: User }) {
   const { data, loading, error } = useAsync(api.dashboard, []);
   const moderator = isModerator(user);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [coordinatorFilter, setCoordinatorFilter] = useState("");
+  const [courseFilter, setCourseFilter] = useState("");
+  const [areaFilter, setAreaFilter] = useState("");
   if (loading) return <Loading />;
   if (error) return <ErrorMessage text={error} />;
   const cards = data?.cards || {};
   const rows = data?.protocolos || [];
-  const demandRows = rows.map((row: Row) => {
+  const enrichedRows = rows.map((row: Row) => {
     const totalHours = diffHours(row.data_abertura, row.data_atualizacao || new Date().toISOString());
     const stalledDays = diffDays(row.data_atualizacao || row.data_abertura);
     return {
@@ -381,6 +454,13 @@ function DashboardPage({ user }: { user: User }) {
       tempo_total_horas: totalHours,
       tempo_total_min: Math.round(totalHours * 60)
     };
+  });
+  const demandRows = enrichedRows.filter((row: Row) => {
+    if (statusFilter && row.status_executivo !== statusFilter) return false;
+    if (coordinatorFilter && String(row.nome_coordenador || "Sem coordenador") !== coordinatorFilter) return false;
+    if (courseFilter && String(row.curso || "Curso nao informado") !== courseFilter) return false;
+    if (areaFilter && String(row.area || "Area nao informada") !== areaFilter) return false;
+    return true;
   });
   const totalDemands = demandRows.length;
   const delayedDemands = demandRows.filter((row: Row) => row.status_executivo === "Atrasada").length;
@@ -454,6 +534,20 @@ function DashboardPage({ user }: { user: User }) {
     "Tempo Total (Min)": row.tempo_total_min,
     "Tempo Medio Total (Horas)": formatNumber(row.tempo_total_horas, 2)
   }));
+  const activeFilters = [
+    statusFilter ? { key: "status", label: `Status: ${statusFilter}` } : null,
+    coordinatorFilter ? { key: "coordenador", label: `Coordenador: ${coordinatorFilter}` } : null,
+    courseFilter ? { key: "curso", label: `Curso: ${courseFilter}` } : null,
+    areaFilter ? { key: "area", label: `Area: ${areaFilter}` } : null
+  ].filter(Boolean) as { key: string; label: string }[];
+
+  function clearFilter(key: string) {
+    if (key === "status") setStatusFilter("");
+    if (key === "coordenador") setCoordinatorFilter("");
+    if (key === "curso") setCourseFilter("");
+    if (key === "area") setAreaFilter("");
+  }
+
   return (
     <PageBlock title="Dashboard">
       {(user.acesso_pendente || user.perfil === "Pendente") && (
@@ -494,6 +588,18 @@ function DashboardPage({ user }: { user: User }) {
           </div>
         </aside>
         <section className="dashboard-main">
+          {activeFilters.length > 0 && (
+            <div className="dashboard-filter-bar">
+              {activeFilters.map((filter) => (
+                <button key={filter.key} type="button" className="dashboard-filter-chip" onClick={() => clearFilter(filter.key)}>
+                  {filter.label} ×
+                </button>
+              ))}
+              <button type="button" className="dashboard-filter-reset" onClick={() => { setStatusFilter(""); setCoordinatorFilter(""); setCourseFilter(""); setAreaFilter(""); }}>
+                Limpar tudo
+              </button>
+            </div>
+          )}
           <div className="dashboard-metric-grid">
             <Metric title="Quantidade de Demandas" value={totalDemands} />
             <Metric title="Fluxos Finalizados" value={finalizedDemands} />
@@ -503,12 +609,34 @@ function DashboardPage({ user }: { user: User }) {
             <Metric title="Areas Atendidas" value={topAreas.length} />
           </div>
           <div className="dashboard-grid-two">
-            <DashboardPie title="Quantidade de Demandas por Status" entries={statusEntries} legendTitle="Status" />
-            <DashboardPie title="Quantidade de Entidades por Coordenador" entries={coordinatorEntries} legendTitle="Coordenador" />
+            <DashboardPie
+              title="Quantidade de Demandas por Status"
+              entries={statusEntries}
+              legendTitle="Status"
+              selectedLabel={statusFilter}
+              onSelect={(label) => setStatusFilter((current) => current === label ? "" : label)}
+            />
+            <DashboardPie
+              title="Quantidade de Entidades por Coordenador"
+              entries={coordinatorEntries}
+              legendTitle="Coordenador"
+              selectedLabel={coordinatorFilter}
+              onSelect={(label) => setCoordinatorFilter((current) => current === label ? "" : label)}
+            />
           </div>
           <div className="dashboard-grid-two">
-            <DashboardBars title="Cursos mais solicitados" rows={topCourses} />
-            <DashboardBars title="Demandas por area" rows={topAreas} />
+            <DashboardBars
+              title="Cursos mais solicitados"
+              rows={topCourses}
+              selectedLabel={courseFilter}
+              onSelect={(label) => setCourseFilter((current) => current === label ? "" : label)}
+            />
+            <DashboardBars
+              title="Demandas por area"
+              rows={topAreas}
+              selectedLabel={areaFilter}
+              onSelect={(label) => setAreaFilter((current) => current === label ? "" : label)}
+            />
           </div>
           <div className="dashboard-grid-two">
             <DashboardWords title="Palavras que mais aparecem (quando reprovada)" rows={topWords} />
