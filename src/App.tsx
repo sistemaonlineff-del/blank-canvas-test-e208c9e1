@@ -18,6 +18,16 @@ const pageLabels: Record<Page, string> = {
   config: "Configurações"
 };
 
+const pageDescriptions: Record<string, string> = {
+  Dashboard: "Acompanhe o funil completo das demandas com visão gerencial, filtros dinâmicos e exportação da base real.",
+  "Qualificar Nova Entidade": "Conduza o cadastro, o formulário geral e o BPF em uma jornada mais clara e organizada.",
+  Cursos: "Abra novas demandas de capacitação com escolha guiada da entidade, área, curso e questionário.",
+  "Consultar Status": "Pesquise protocolos, acompanhe a linha do tempo e visualize todos os detalhes do fluxo.",
+  "Minhas Aprovações": "Avalie, aprove, reprova ou encaminhe demandas com contexto completo em uma única tela.",
+  Entidades: "Cadastre, localize e mantenha os dados principais das entidades com muito mais controle.",
+  Configurações: "Gerencie cursos, perguntas, alternativas, owners e usuários com uma experiência mais enxuta."
+};
+
 const tableLabels: Record<string, string> = {
   cursos: "Cursos",
   perguntas_qualificacao: "Perguntas Entidade",
@@ -203,13 +213,13 @@ function Layout({ user, page, setPage, logout, children }: any) {
         </div>
         <nav>
           {pages.map((item) => (
-            <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)}>
+            <button type="button" key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)}>
               {item.icon}
               {pageLabels[item.id]}
             </button>
           ))}
         </nav>
-        <button className="logout" onClick={logout}>
+        <button type="button" className="logout" onClick={logout}>
           <LogOut size={18} />
           Sair
         </button>
@@ -794,7 +804,7 @@ function EntidadesPage({ user }: { user: User }) {
             <label>CNPJ
               <input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="CNPJ da Entidade" />
             </label>
-            <button disabled={!nome.trim() || !cnpj.trim() || submitting}>{submitting ? "Salvando..." : "Cadastrar entidade"}</button>
+            <button type="submit" disabled={!nome.trim() || !cnpj.trim() || submitting}>{submitting ? "Salvando..." : "Cadastrar entidade"}</button>
           </form>
           <EntitySearchField
             label="Selecionar entidade para editar"
@@ -855,7 +865,7 @@ function EntidadesPage({ user }: { user: User }) {
                   <input value={entityFields.natureza_juridica || ""} onChange={(e) => setEntityFields({ ...entityFields, natureza_juridica: e.target.value })} />
                 </label>
               </div>
-              <button disabled={savingEntity}>{savingEntity ? "Salvando..." : "Salvar alteracoes da entidade"}</button>
+              <button type="submit" disabled={savingEntity}>{savingEntity ? "Salvando..." : "Salvar alteracoes da entidade"}</button>
             </>
           ) : <div className="empty">Selecione uma entidade para carregar os dados e editar os valores registrados.</div>}
         </form>
@@ -1203,7 +1213,7 @@ function QualificationQuestionForm({ kind, pending, onSaved }: { kind: "geral" |
           </section>
         ))}
       </div>
-      <button disabled={!entidadeId || submitting}>
+      <button type="submit" disabled={!entidadeId || submitting}>
         {submitting ? "Salvando..." : kind === "geral" ? "Salvar Formulario Geral e abrir BPF" : "Salvar BPF e concluir qualificação"}
       </button>
     </form>
@@ -1387,7 +1397,7 @@ function QualificacaoPage() {
               </select>
             </label>
           </div>
-          <button disabled={!selected || savingCadastro}>{savingCadastro ? "Salvando..." : "Salvar dados cadastrais"}</button>
+          <button type="submit" disabled={!selected || savingCadastro}>{savingCadastro ? "Salvando..." : "Salvar dados cadastrais"}</button>
         </form>
       )}
       {tab === "geral" && <QualificationQuestionForm kind="geral" pending={pendingGeral.data?.items || []} onSaved={(text) => { setMessage(text); setRefreshKey((value) => value + 1); setTab("bpf"); }} />}
@@ -1435,7 +1445,7 @@ function CursosPage({ user }: { user: User }) {
         <label>Observação
           <textarea value={payload.observacao || ""} onChange={(e) => setPayload({ ...payload, observacao: e.target.value })} />
         </label>
-        <button>Salvar e iniciar fluxo</button>
+        <button type="submit">Salvar e iniciar fluxo</button>
       </form>
       {message && <div className="alert success">{message}</div>}
     </PageBlock>
@@ -1541,7 +1551,7 @@ function CursosPageV2({ user }: { user: User }) {
           <textarea value={payload.observacao || ""} onChange={(e) => setPayload({ ...payload, observacao: e.target.value })} />
         </label>
         {errorMessage && <div className="alert error">{errorMessage}</div>}
-        <button disabled={!payload.entidade_id || !payload.curso_id || submitting}>{submitting ? "Salvando..." : "Salvar e iniciar fluxo"}</button>
+        <button type="submit" disabled={!payload.entidade_id || !payload.curso_id || submitting}>{submitting ? "Salvando..." : "Salvar e iniciar fluxo"}</button>
       </form>
       {message && <div className="alert success">{message}</div>}
       {!qualified.length && <div className="empty">Finalize o Formulário Geral e o BPF de uma entidade para liberar cursos.</div>}
@@ -1578,7 +1588,7 @@ function AprovacoesPage({ user }: { user: User }) {
           <option value="">Selecionar protocolo</option>
           {rows.map((row) => <option key={row.protocolo} value={row.protocolo}>{row.protocolo} · {row.entidade} · {row.status}</option>)}
         </select>
-        <button onClick={advance} disabled={!selected}>Aprovar / Avançar</button>
+        <button type="button" onClick={advance} disabled={!selected}>Aprovar / Avançar</button>
       </div>
       {selected && <DataTable rows={forms.data?.historico || []} empty="Sem histórico." />}
     </PageBlock>
@@ -2090,7 +2100,7 @@ function ConfigPage() {
       ) : (
         <ConfigCollectionEditor table={table} rows={rows} onChange={setRows} references={references} />
       )}
-      {table !== "notificacoes" && <button onClick={save}>Salvar alterações</button>}
+      {table !== "notificacoes" && <button type="button" onClick={save}>Salvar alterações</button>}
     </PageBlock>
   );
 }
@@ -2266,13 +2276,22 @@ function UsersManagementTable({ rows, onChange }: { rows: Row[]; onChange: (rows
 function DataTable({ rows, empty = "Nenhum registro encontrado." }: { rows: Row[]; empty?: string }) {
   if (!rows.length) return <div className="empty">{empty}</div>;
   const cols = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 12);
+  const labelFor = (key: string) =>
+    key
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const cellValue = (value: any) => {
+    if (value == null || value === "") return "—";
+    if (typeof value === "boolean") return value ? "Sim" : "Não";
+    return String(value);
+  };
   return (
     <div className="table-scroll">
       <table>
-        <thead><tr>{cols.map((col) => <th key={col}>{col}</th>)}</tr></thead>
+        <thead><tr>{cols.map((col) => <th key={col}>{labelFor(col)}</th>)}</tr></thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr key={index}>{cols.map((col) => <td key={col}>{String(row[col] ?? "")}</td>)}</tr>
+            <tr key={index}>{cols.map((col) => <td key={col}>{cellValue(row[col])}</td>)}</tr>
           ))}
         </tbody>
       </table>
@@ -2284,7 +2303,11 @@ function filterProtocols(rows: Row[], status: string, query: string) {
   const term = query.trim().toLowerCase();
   return rows.filter((row) => {
     const statusOk = !status || row.status === status;
-    const protocolOk = !term || String(row.protocolo || "").toLowerCase().includes(term);
+    const protocolOk =
+      !term ||
+      [row.protocolo, row.entidade, row.curso, row.area, row.status]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(term));
     return statusOk && protocolOk;
   });
 }
@@ -2303,6 +2326,7 @@ function actionLabel(status: string) {
 }
 
 function ProtocolFilters({ rows, status, setStatus, query, setQuery }: { rows: Row[]; status: string; setStatus: (value: string) => void; query: string; setQuery: (value: string) => void }) {
+  const filteredCount = filterProtocols(rows, status, query).length;
   return (
     <div className="filters-bar">
       <label>Status
@@ -2311,9 +2335,10 @@ function ProtocolFilters({ rows, status, setStatus, query, setQuery }: { rows: R
           {statusOptions(rows).map((item) => <option key={item} value={item}>{item}</option>)}
         </select>
       </label>
-      <label>Protocolo
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar protocolo" />
+      <label>Buscar
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar protocolo, entidade, curso ou área" />
       </label>
+      <div className="filter-result">{filteredCount} registro(s)</div>
     </div>
   );
 }
@@ -2389,16 +2414,16 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
             <textarea value={observacao} onChange={(e) => setObservacao(e.target.value)} />
           </label>
           <div className="action-row">
-            <button onClick={() => onAdvance?.(observacao, dataAgendada)} disabled={busy || !user || (String(currentRow.status || "") === "Agendamento" && !dataAgendada)}>
+            <button type="button" onClick={() => onAdvance?.(observacao, dataAgendada)} disabled={busy || !user || (String(currentRow.status || "") === "Agendamento" && !dataAgendada)}>
               {busy ? "Enviando..." : actionLabel(String(currentRow.status || ""))}
             </button>
             {needsDecisionButtons ? (
               <>
-                <button className="warning-button" onClick={() => onWaitlist?.(observacao)} disabled={busy || !user}>Lista de espera</button>
-                <button className="danger" onClick={() => onReject?.(observacao)} disabled={busy || !user}>Reprovar</button>
+                <button type="button" className="warning-button" onClick={() => onWaitlist?.(observacao)} disabled={busy || !user}>Lista de espera</button>
+                <button type="button" className="danger" onClick={() => onReject?.(observacao)} disabled={busy || !user}>Reprovar</button>
               </>
             ) : (
-              <button className="danger" onClick={() => onCancel?.(observacao)} disabled={busy || !user}>Cancelar</button>
+              <button type="button" className="danger" onClick={() => onCancel?.(observacao)} disabled={busy || !user}>Cancelar</button>
             )}
           </div>
         </div>
@@ -2408,15 +2433,26 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
 }
 
 function Tabs({ value, onChange, items }: { value: any; onChange: (value: any) => void; items: [any, string][] }) {
-  return <div className="tabs">{items.map(([id, label]) => <button key={id} className={value === id ? "active" : ""} onClick={() => onChange(id)}>{label}</button>)}</div>;
+  return <div className="tabs">{items.map(([id, label]) => <button type="button" key={id} className={value === id ? "active" : ""} onClick={() => onChange(id)}>{label}</button>)}</div>;
 }
 
 function PageBlock({ title, children }: { title: string; children: React.ReactNode }) {
-  return <main><h2 className="page-title">{title}</h2>{children}</main>;
+  return (
+    <main className="page-shell">
+      <div className="page-header">
+        <div>
+          <span className="page-eyebrow">Sistema Bahia</span>
+          <h2 className="page-title">{title}</h2>
+          <p className="page-subtitle">{pageDescriptions[title] || "Painel operacional do sistema."}</p>
+        </div>
+      </div>
+      {children}
+    </main>
+  );
 }
 
 function Metric({ title, value }: { title: string; value: any }) {
-  return <div className="metric"><strong>{value ?? 0}</strong><span>{title}</span></div>;
+  return <div className="metric"><span>{title}</span><strong>{value ?? 0}</strong></div>;
 }
 
 function Loading() { return <div className="empty">Carregando...</div>; }
