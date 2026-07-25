@@ -5,11 +5,11 @@ import logo1 from "../assets/logo_1.jpeg";
 import logo2 from "../assets/logo_2.jpeg";
 import "./styles.css";
 
-type Page = "home" | "qualificacao" | "cursos" | "status" | "aprovacoes" | "entidades" | "config";
+type Page = "dashboard" | "qualificacao" | "cursos" | "status" | "aprovacoes" | "entidades" | "config";
 type AnswerValue = string | string[];
 
 const pageLabels: Record<Page, string> = {
-  home: "Tela principal",
+  dashboard: "Dashboard",
   qualificacao: "Qualificar Nova Entidade",
   cursos: "Cursos",
   status: "Consultar Status",
@@ -177,7 +177,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 function Layout({ user, page, setPage, logout, children }: any) {
   const admin = isModerator(user);
   const pages: { id: Page; icon: React.ReactNode }[] = [
-    { id: "home", icon: <Home size={18} /> },
+    { id: "dashboard", icon: <Home size={18} /> },
     { id: "qualificacao", icon: <UserPlus size={18} /> },
     { id: "cursos", icon: <FileText size={18} /> },
     { id: "status", icon: <Search size={18} /> },
@@ -225,30 +225,282 @@ function Layout({ user, page, setPage, logout, children }: any) {
   );
 }
 
-function HomePage({ user }: { user: User }) {
+function parseDateValue(value: any) {
+  if (!value) return null;
+  const normalized = String(value).replace(" ", "T");
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function diffHours(start: any, end: any) {
+  const startDate = parseDateValue(start);
+  const endDate = parseDateValue(end);
+  if (!startDate || !endDate) return 0;
+  return Math.max(0, (endDate.getTime() - startDate.getTime()) / 36e5);
+}
+
+function diffDays(start: any, end: Date = new Date()) {
+  const startDate = parseDateValue(start);
+  if (!startDate) return 0;
+  return Math.max(0, Math.floor((end.getTime() - startDate.getTime()) / 86400000));
+}
+
+function formatNumber(value: number, digits = 0) {
+  return new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
+function formatDateShort(value: any) {
+  const date = parseDateValue(value);
+  return date ? date.toLocaleDateString("pt-BR") : "-";
+}
+
+function normalizeWord(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function executiveStatus(row: Row) {
+  const statusKey = normalizeWord(String(row.status || ""));
+  const stalledDays = diffDays(row.data_atualizacao || row.data_abertura);
+  if (statusKey.includes("reprovado")) return "Reprovado";
+  if (statusKey.includes("cancelado")) return "Cancelado";
+  if (statusKey.includes("finalizado")) return "Concluido";
+  if (stalledDays > 7) return "Atrasada";
+  if (statusKey.includes("espera")) return "Lista de espera";
+  return "Em andamento";
+}
+
+function pieSegments(entries: { label: string; value: number; color: string }[]) {
+  const total = entries.reduce((sum, item) => sum + item.value, 0) || 1;
+  let current = 0;
+  return entries.map((item) => {
+    const start = current;
+    current += (item.value / total) * 360;
+    return `${item.color} ${start}deg ${current}deg`;
+  }).join(", ");
+}
+
+function DashboardPie({ title, entries, legendTitle }: { title: string; entries: { label: string; value: number; color: string }[]; legendTitle: string }) {
+  const filtered = entries.filter((item) => item.value > 0);
+  const total = filtered.reduce((sum, item) => sum + item.value, 0) || 1;
+  return (
+    <section className="dashboard-card">
+      <div className="dashboard-section-header">
+        <h3>{title}</h3>
+      </div>
+      <div className="dashboard-pie-layout">
+        <div className="dashboard-pie-wrap">
+          <div className="dashboard-pie" style={{ background: `conic-gradient(${pieSegments(filtered.length ? filtered : [{ label: "Sem dados", value: 1, color: "#cbd5e1" }])})` }} />
+        </div>
+        <div className="dashboard-legend">
+          <strong>{legendTitle}</strong>
+          {filtered.map((item) => (
+            <div key={item.label} className="dashboard-legend-item">
+              <span className="dashboard-legend-dot" style={{ background: item.color }} />
+              <span>{item.label}</span>
+              <b>{item.value} ({formatNumber((item.value / total) * 100, 0)}%)</b>
+            </div>
+          ))}
+          {!filtered.length && <div className="dashboard-empty-inline">Sem dados.</div>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DashboardBars({ title, rows }: { title: string; rows: { label: string; value: number }[] }) {
+  const max = Math.max(...rows.map((row) => row.value), 1);
+  return (
+    <section className="dashboard-card">
+      <div className="dashboard-section-header">
+        <h3>{title}</h3>
+      </div>
+      <div className="dashboard-bars">
+        {rows.map((row) => (
+          <div key={row.label} className="dashboard-bar-row">
+            <span>{row.label}</span>
+            <div className="dashboard-bar-track">
+              <div className="dashboard-bar-fill" style={{ width: `${(row.value / max) * 100}%` }} />
+            </div>
+            <b>{row.value}</b>
+          </div>
+        ))}
+        {!rows.length && <div className="dashboard-empty-inline">Sem dados suficientes.</div>}
+      </div>
+    </section>
+  );
+}
+
+function DashboardWords({ title, rows }: { title: string; rows: { label: string; value: number }[] }) {
+  const max = Math.max(...rows.map((row) => row.value), 1);
+  return (
+    <section className="dashboard-card">
+      <div className="dashboard-section-header">
+        <h3>{title}</h3>
+      </div>
+      <div className="dashboard-word-grid">
+        {rows.map((row, index) => (
+          <div
+            key={row.label}
+            className="dashboard-word-block"
+            style={{
+              flexBasis: `${Math.max(28, (row.value / max) * 100)}%`,
+              background: index % 2 === 0 ? "linear-gradient(135deg, #1d4ed8, #3b82f6)" : "linear-gradient(135deg, #1e3a8a, #312e81)"
+            }}
+          >
+            <strong>{row.label}</strong>
+            <span>{row.value}</span>
+          </div>
+        ))}
+        {!rows.length && <div className="dashboard-empty-inline">Nenhuma palavra relevante nas reprovacoes.</div>}
+      </div>
+    </section>
+  );
+}
+
+function DashboardPage({ user }: { user: User }) {
   const { data, loading, error } = useAsync(api.dashboard, []);
   const moderator = isModerator(user);
   if (loading) return <Loading />;
   if (error) return <ErrorMessage text={error} />;
   const cards = data?.cards || {};
+  const rows = data?.protocolos || [];
+  const demandRows = rows.map((row: Row) => {
+    const totalHours = diffHours(row.data_abertura, row.data_atualizacao || new Date().toISOString());
+    const stalledDays = diffDays(row.data_atualizacao || row.data_abertura);
+    return {
+      ...row,
+      status_executivo: executiveStatus(row),
+      dias_sem_movimentacao: stalledDays,
+      parado_7d: stalledDays > 7 ? 1 : 0,
+      tempo_total_horas: totalHours,
+      tempo_total_min: Math.round(totalHours * 60)
+    };
+  });
+  const totalDemands = demandRows.length;
+  const delayedDemands = demandRows.filter((row: Row) => row.status_executivo === "Atrasada").length;
+  const averageHours = demandRows.length
+    ? demandRows.reduce((sum: number, row: Row) => sum + Number(row.tempo_total_horas || 0), 0) / demandRows.length
+    : 0;
+  const statusMap = new Map<string, number>();
+  demandRows.forEach((row: Row) => statusMap.set(row.status_executivo, (statusMap.get(row.status_executivo) || 0) + 1));
+  const statusEntries = [
+    { label: "Concluido", color: "#2563eb" },
+    { label: "Atrasada", color: "#1e3a8a" },
+    { label: "Reprovado", color: "#f97316" },
+    { label: "Em andamento", color: "#16a34a" },
+    { label: "Cancelado", color: "#94a3b8" },
+    { label: "Lista de espera", color: "#a855f7" }
+  ].map((item) => ({ ...item, value: statusMap.get(item.label) || 0 }));
+  const coordinatorMap = new Map<string, number>();
+  demandRows.forEach((row: Row) => {
+    const key = String(row.nome_coordenador || "Sem coordenador");
+    coordinatorMap.set(key, (coordinatorMap.get(key) || 0) + 1);
+  });
+  const coordinatorPalette = ["#2563eb", "#1e3a8a", "#f97316", "#16a34a", "#a855f7", "#0891b2"];
+  const coordinatorEntries = Array.from(coordinatorMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([label, value], index) => ({ label, value, color: coordinatorPalette[index % coordinatorPalette.length] }));
+  const courseMap = new Map<string, number>();
+  demandRows.forEach((row: Row) => {
+    const key = String(row.curso || "Curso nao informado");
+    courseMap.set(key, (courseMap.get(key) || 0) + 1);
+  });
+  const topCourses = Array.from(courseMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([label, value]) => ({ label, value }));
+  const stopWords = new Set(["de", "da", "do", "das", "dos", "e", "a", "o", "em", "para", "com", "na", "no", "por", "sem", "que", "uma", "um"]);
+  const wordMap = new Map<string, number>();
+  demandRows
+    .filter((row: Row) => row.status_executivo === "Reprovado")
+    .forEach((row: Row) => {
+      String(row.observacao || "")
+        .split(/[^A-Za-zÀ-ÿ0-9]+/)
+        .map((word) => normalizeWord(word))
+        .filter((word) => word && word.length > 2 && !stopWords.has(word))
+        .forEach((word) => wordMap.set(word, (wordMap.get(word) || 0) + 1));
+    });
+  const topWords = Array.from(wordMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([label, value]) => ({ label, value }));
+  const tableRows = demandRows.slice(0, 10).map((row: Row) => ({
+    Protocolo: row.protocolo,
+    "Status Executivo": row.status_executivo,
+    "Data Agendamento": formatDateShort(row.data_agendada),
+    "Dias Sem Movimentacao": row.dias_sem_movimentacao,
+    "Demandas Paradas +7d": row.parado_7d,
+    "Tempo Total (Min)": row.tempo_total_min,
+    "Tempo Medio Total (Horas)": formatNumber(row.tempo_total_horas, 2)
+  }));
   return (
-    <PageBlock title="Tela principal">
+    <PageBlock title="Dashboard">
       {(user.acesso_pendente || user.perfil === "Pendente") && (
         <div className="alert warning">Seu usuário está aguardando qualificação de atividade por um moderador.</div>
       )}
       {moderator && Number(cards.usuariosPendentes || 0) > 0 && (
         <div className="alert warning">Há {cards.usuariosPendentes} usuário(s) pendente(s) aguardando definição de cargo em Configurações → Usuários.</div>
       )}
-      <div className="cards-grid">
-        <Metric title="Entidades cadastradas" value={cards.entidades} />
-        <Metric title="Entidades qualificadas" value={cards.qualificadas} />
-        <Metric title="Form. geral pendentes" value={cards.formGeralPendentes} />
-        <Metric title="BPF pendentes" value={cards.bpfPendentes} />
-        <Metric title="Cursos disponíveis" value={cards.cursos} />
-        <Metric title="Fluxos em andamento" value={cards.fluxos} />
-        {moderator && <Metric title="Usuários pendentes" value={cards.usuariosPendentes} />}
+      <div className="dashboard-shell">
+        <aside className="dashboard-sidecard">
+          <div className="dashboard-sidecard-title">
+            <strong>CAPACITACAO</strong>
+            <span>CAR</span>
+          </div>
+          <div className="dashboard-sidecard-body">
+            <div className="dashboard-sidecard-stat">
+              <b>{cards.entidades ?? 0}</b>
+              <span>Entidades cadastradas</span>
+            </div>
+            <div className="dashboard-sidecard-stat">
+              <b>{cards.qualificadas ?? 0}</b>
+              <span>Entidades qualificadas</span>
+            </div>
+            <div className="dashboard-sidecard-stat">
+              <b>{cards.fluxos ?? 0}</b>
+              <span>Fluxos ativos</span>
+            </div>
+            {moderator && (
+              <div className="dashboard-sidecard-stat">
+                <b>{cards.usuariosPendentes ?? 0}</b>
+                <span>Usuarios pendentes</span>
+              </div>
+            )}
+          </div>
+          <div className="dashboard-sidecard-logos">
+            <img src={logo1} alt="CAR" />
+            <img src={logo2} alt="Governo da Bahia" />
+          </div>
+        </aside>
+        <section className="dashboard-main">
+          <div className="dashboard-metric-grid">
+            <Metric title="Quantidade de Demandas" value={totalDemands} />
+            <Metric title="Demandas Atrasadas" value={delayedDemands} />
+            <Metric title="Tempo Medio Total (Horas)" value={formatNumber(averageHours, 2)} />
+          </div>
+          <div className="dashboard-grid-two">
+            <DashboardPie title="Quantidade de Demandas por Status" entries={statusEntries} legendTitle="Status" />
+            <DashboardPie title="Quantidade de Entidades por Coordenador" entries={coordinatorEntries} legendTitle="Coordenador" />
+          </div>
+          <div className="dashboard-grid-two">
+            <DashboardBars title="Cursos mais solicitados" rows={topCourses} />
+            <DashboardWords title="Palavras que mais aparecem (quando reprovada)" rows={topWords} />
+          </div>
+          <section className="dashboard-card">
+            <div className="dashboard-section-header">
+              <h3>Detalhamento das demandas</h3>
+            </div>
+            <DataTable rows={tableRows} empty="Nenhuma demanda encontrada para o dashboard." />
+          </section>
+        </section>
       </div>
-      <DataTable rows={data?.protocolos || []} empty="Nenhum protocolo criado." />
     </PageBlock>
   );
 }
@@ -1993,7 +2245,7 @@ function getStoredUser() {
 
 export default function App() {
   const [user, setUser] = useState<User | null>(getStoredUser);
-  const [page, setPage] = useState<Page>("home");
+  const [page, setPage] = useState<Page>("dashboard");
 
   if (!user) return <Login onLogin={setUser} />;
 
@@ -2004,12 +2256,12 @@ export default function App() {
 
   return (
     <Layout user={user} page={page} setPage={setPage} logout={logout}>
-      {page === "home" && <HomePage user={user} />}
+      {page === "dashboard" && <DashboardPage user={user} />}
       {page === "entidades" && <EntidadesPage user={user} />}
       {page === "qualificacao" && <QualificacaoPage />}
       {page === "cursos" && <CursosPageV2 user={user} />}
       {page === "status" && <StatusPageV2 />}
-      {page === "aprovacoes" && <AprovacoesPageV2 user={user} onDone={() => setPage("home")} />}
+      {page === "aprovacoes" && <AprovacoesPageV2 user={user} onDone={() => setPage("dashboard")} />}
       {page === "config" && <ConfigPage />}
     </Layout>
   );

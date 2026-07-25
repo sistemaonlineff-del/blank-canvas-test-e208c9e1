@@ -632,13 +632,21 @@ const supabaseApi = {
     const [entidadesRes, cursosRes, protocolosRes, usuariosRes] = await Promise.all([
       db.from("entidades").select("*"),
       db.from("cursos").select("*"),
-      db.from("protocolos").select("*"),
+      db.from("protocolos").select("*, entidades(*), cursos(curso)").order("id", { ascending: false }),
       db.from("usuarios").select("*")
     ]);
     throwDb(entidadesRes.error || cursosRes.error || protocolosRes.error || usuariosRes.error);
     const entidades = (entidadesRes.data || []).filter(isActive);
     const cursos = (cursosRes.data || []).filter(isActive);
-    const protocolos = protocolosRes.data || [];
+    const protocolos = (protocolosRes.data || []).map((row: any) => ({
+      ...row,
+      entidade: row.entidades?.entidade,
+      cnpj: row.entidades?.cnpj,
+      nivel_entidade: row.entidades?.nivel,
+      nome_coordenador: row.entidades?.nome_coordenador,
+      municipio_entidade: row.entidades?.municipio_entidade,
+      curso: row.cursos?.curso
+    }));
     const usuarios = (usuariosRes.data || []).filter(isActive);
     return {
       cards: {
@@ -650,7 +658,7 @@ const supabaseApi = {
         fluxos: protocolos.filter((p) => ![STATUS_FINALIZADO, STATUS_CANCELADO, STATUS_REPROVADO].includes(p.status)).length,
         usuariosPendentes: usuarios.filter((u) => dbTrue(u.acesso_pendente) || !u.perfil).length
       },
-      protocolos: protocolos.slice(-20),
+      protocolos: protocolos.slice(0, 50),
       entidadesPorNivel: entidades,
       cursosPorArea: cursos
     };
