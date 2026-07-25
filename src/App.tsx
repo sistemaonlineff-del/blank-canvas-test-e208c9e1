@@ -257,6 +257,24 @@ function formatDateShort(value: any) {
   return date ? date.toLocaleDateString("pt-BR") : "-";
 }
 
+function downloadSpreadsheet(filename: string, rows: Record<string, any>[]) {
+  const headers = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
+  const escapeCell = (value: any) => `"${String(value ?? "").replace(/"/g, "\"\"")}"`;
+  const csv = [
+    headers.join(";"),
+    ...rows.map((row) => headers.map((header) => escapeCell(row[header])).join(";"))
+  ].join("\r\n");
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function normalizeWord(value: string) {
   return value
     .normalize("NFD")
@@ -548,6 +566,30 @@ function DashboardPage({ user }: { user: User }) {
     if (key === "area") setAreaFilter("");
   }
 
+  function exportFlows() {
+    const exportRows = demandRows.map((row: Row) => ({
+      Protocolo: row.protocolo,
+      "Status Real": row.status || "-",
+      "Status Executivo": row.status_executivo,
+      "Etapa Atual": row.etapa_atual || "-",
+      "Responsavel Atual": row.responsavel_atual || "-",
+      Area: row.area || "-",
+      Curso: row.curso || "-",
+      Entidade: row.entidade || "-",
+      CNPJ: row.cnpj || "-",
+      Coordenador: row.nome_coordenador || "-",
+      "Data Abertura": formatDateShort(row.data_abertura),
+      "Data Atualizacao": formatDateShort(row.data_atualizacao),
+      "Data Agendamento": formatDateShort(row.data_agendada),
+      "Dias Sem Movimentacao": row.dias_sem_movimentacao,
+      "Tempo Total (Min)": row.tempo_total_min,
+      "Tempo Medio Total (Horas)": formatNumber(row.tempo_total_horas, 2),
+      "Pontuacao Curso": row.pontuacao_curso ?? 0,
+      Observacao: row.observacao || ""
+    }));
+    downloadSpreadsheet(`fluxos-dashboard-${new Date().toISOString().slice(0, 10)}.csv`, exportRows);
+  }
+
   return (
     <PageBlock title="Dashboard">
       {(user.acesso_pendente || user.perfil === "Pendente") && (
@@ -600,6 +642,9 @@ function DashboardPage({ user }: { user: User }) {
               </button>
             </div>
           )}
+          <div className="dashboard-actions">
+            <button type="button" onClick={exportFlows}>Exportar Excel</button>
+          </div>
           <div className="dashboard-metric-grid">
             <Metric title="Quantidade de Demandas" value={totalDemands} />
             <Metric title="Fluxos Finalizados" value={finalizedDemands} />

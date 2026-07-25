@@ -96,6 +96,7 @@ nav button.active { background: #dbeafe; color: #1e3a8a; }
 .dashboard-section-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .dashboard-section-header h3 { margin: 0; font-size: 17px; }
 .dashboard-filter-bar { display: flex; flex-wrap: wrap; gap: 10px; }
+.dashboard-actions { display: flex; justify-content: flex-end; }
 .dashboard-filter-chip, .dashboard-filter-reset { border-radius: 999px; }
 .dashboard-filter-chip { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
 .dashboard-filter-reset { border-color: #d6e0ea; background: #fff; color: #475467; }
