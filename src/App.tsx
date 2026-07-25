@@ -1,6 +1,7 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Database, FileText, Home, LogOut, RefreshCw, Search, Settings, UserPlus } from "lucide-react";
 import { api, CADASTRO_OPTIONS, Row, User, USER_ROLE_OPTIONS } from "./api";
+import { courseFinancialLabel, formatCompactCurrencyBRL, formatCurrencyBRL, lookupCourseFinancial } from "./courseFinancials";
 import logo1 from "../assets/logo_1.jpeg";
 import logo2 from "../assets/logo_2.jpeg";
 import "./styles.css";
@@ -34,7 +35,7 @@ const tableLabels: Record<string, string> = {
   perguntas_bpf: "Perguntas BPF",
   perguntas_curso: "Perguntas Curso",
   alternativas_curso: "Alternativas Curso",
-  owners_area: "Owners por Área",
+  owners_area: "Responsáveis do Fluxo",
   entidades: "Entidades",
   usuarios: "Usuários",
   notificacoes: "Notificações"
@@ -398,11 +399,13 @@ function DashboardPie({
 function DashboardBars({
   title,
   rows,
+  formatValue,
   selectedLabel,
   onSelect
 }: {
   title: string;
   rows: { label: string; value: number }[];
+  formatValue?: (value: number) => string;
   selectedLabel?: string;
   onSelect?: (label: string) => void;
 }) {
@@ -424,7 +427,7 @@ function DashboardBars({
             <div className="dashboard-bar-track">
               <div className="dashboard-bar-fill" style={{ width: `${(row.value / max) * 100}%` }} />
             </div>
-            <b>{row.value}</b>
+            <b>{formatValue ? formatValue(row.value) : row.value}</b>
           </button>
         ))}
         {!rows.length && <div className="dashboard-empty-inline">Sem dados suficientes.</div>}
@@ -471,11 +474,17 @@ function DashboardPage({ user }: { user: User }) {
   if (error) return <ErrorMessage text={error} />;
   const cards = data?.cards || {};
   const rows = data?.protocolos || [];
+  const courses = (data?.cursosPorArea || []).map((course: Row) => ({
+    ...course,
+    financial: lookupCourseFinancial(course)
+  }));
+  const finalStatuses = ["Finalizado", "Reprovado", "Cancelado"];
   const enrichedRows = rows.map((row: Row) => {
     const totalHours = diffHours(row.data_abertura, row.data_atualizacao || new Date().toISOString());
     const stalledDays = diffDays(row.data_atualizacao || row.data_abertura);
     return {
       ...row,
+      financial: lookupCourseFinancial({ id: row.curso_id, curso: row.curso, area: row.area }),
       status_executivo: executiveStatus(row),
       dias_sem_movimentacao: stalledDays,
       parado_7d: stalledDays > 7 ? 1 : 0,
@@ -490,13 +499,32 @@ function DashboardPage({ user }: { user: User }) {
     if (areaFilter && String(row.area || "Area nao informada") !== areaFilter) return false;
     return true;
   });
+  const visibleStockCourses = courses.filter((course: Row) => {
+    if (courseFilter && String(course.curso || "Curso nao informado") !== courseFilter) return false;
+    if (areaFilter && String(course.area || "Area nao informada") !== areaFilter) return false;
+    return true;
+  });
   const totalDemands = demandRows.length;
   const delayedDemands = demandRows.filter((row: Row) => row.status_executivo === "Atrasada").length;
-  const finalizedDemands = demandRows.filter((row: Row) => ["Finalizado", "Reprovado", "Cancelado"].includes(String(row.status || ""))).length;
-  const activeDemands = demandRows.filter((row: Row) => !["Finalizado", "Reprovado", "Cancelado"].includes(String(row.status || ""))).length;
+  const finalizedDemands = demandRows.filter((row: Row) => finalStatuses.includes(String(row.status || ""))).length;
+  const activeDemands = demandRows.filter((row: Row) => !finalStatuses.includes(String(row.status || ""))).length;
   const averageHours = demandRows.length
     ? demandRows.reduce((sum: number, row: Row) => sum + Number(row.tempo_total_horas || 0), 0) / demandRows.length
     : 0;
+  const availableStockValue = visibleStockCourses.reduce(
+    (sum: number, course: Row) => sum + Number(course.estoque_total || 0) * Number(course.financial?.unitValue || 0),
+    0
+  );
+  const flowValue = demandRows
+    .filter((row: Row) => !finalStatuses.includes(String(row.status || "")))
+    .reduce((sum: number, row: Row) => sum + Number(row.financial?.unitValue || 0), 0);
+  const finalizedValue = demandRows
+    .filter((row: Row) => String(row.status || "") === "Finalizado")
+    .reduce((sum: number, row: Row) => sum + Number(row.financial?.unitValue || 0), 0);
+  const trackedCourseCount = visibleStockCourses.filter((course: Row) => course.financial).length;
+  const missingValueCount = visibleStockCourses.filter((course: Row) => !course.financial).length;
+  const reservedSeats = demandRows.filter((row: Row) => !finalStatuses.includes(String(row.status || ""))).length;
+  const stockSeats = visibleStockCourses.reduce((sum: number, course: Row) => sum + Number(course.estoque_total || 0), 0);
   const statusMap = new Map<string, number>();
   demandRows.forEach((row: Row) => statusMap.set(row.status_executivo, (statusMap.get(row.status_executivo) || 0) + 1));
   const statusEntries = [
@@ -535,6 +563,16 @@ function DashboardPage({ user }: { user: User }) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 6)
     .map(([label, value]) => ({ label, value }));
+  const valueByAreaMap = new Map<string, number>();
+  demandRows
+    .filter((row: Row) => !finalStatuses.includes(String(row.status || "")) && row.financial)
+    .forEach((row: Row) => {
+      const key = String(row.area || "Area nao informada");
+      valueByAreaMap.set(key, (valueByAreaMap.get(key) || 0) + Number(row.financial?.unitValue || 0));
+    });
+  const valueByAreaRows = Array.from(valueByAreaMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([label, value]) => ({ label, value }));
   const stopWords = new Set(["de", "da", "do", "das", "dos", "e", "a", "o", "em", "para", "com", "na", "no", "por", "sem", "que", "uma", "um"]);
   const wordMap = new Map<string, number>();
   demandRows
@@ -556,6 +594,7 @@ function DashboardPage({ user }: { user: User }) {
     "Status Executivo": row.status_executivo,
     "Area": row.area || "-",
     "Curso": row.curso || "-",
+    "Valor Unitario": row.financial ? formatCurrencyBRL(Number(row.financial.unitValue || 0)) : "Sem valor",
     "Data Agendamento": formatDateShort(row.data_agendada),
     "Dias Sem Movimentacao": row.dias_sem_movimentacao,
     "Demandas Paradas +7d": row.parado_7d,
@@ -588,6 +627,7 @@ function DashboardPage({ user }: { user: User }) {
       Entidade: row.entidade || "-",
       CNPJ: row.cnpj || "-",
       Coordenador: row.nome_coordenador || "-",
+      "Valor Unitario": row.financial ? formatCurrencyBRL(Number(row.financial.unitValue || 0)) : "Sem valor",
       "Data Abertura": formatDateShort(row.data_abertura),
       "Data Atualizacao": formatDateShort(row.data_atualizacao),
       "Data Agendamento": formatDateShort(row.data_agendada),
@@ -662,6 +702,9 @@ function DashboardPage({ user }: { user: User }) {
             <Metric title="Demandas Atrasadas" value={delayedDemands} />
             <Metric title="Tempo Medio Total (Horas)" value={formatNumber(averageHours, 2)} />
             <Metric title="Areas Atendidas" value={topAreas.length} />
+            <Metric title="Valor em Estoque" value={formatCurrencyBRL(availableStockValue)} />
+            <Metric title="Valor em Fluxo" value={formatCurrencyBRL(flowValue)} />
+            <Metric title="Valor Finalizado" value={formatCurrencyBRL(finalizedValue)} />
           </div>
           <div className="dashboard-grid-two">
             <DashboardPie
@@ -694,6 +737,11 @@ function DashboardPage({ user }: { user: User }) {
             />
           </div>
           <div className="dashboard-grid-two">
+            <DashboardBars
+              title="Valor em fluxo por area"
+              rows={valueByAreaRows}
+              formatValue={formatCompactCurrencyBRL}
+            />
             <DashboardWords title="Palavras que mais aparecem (quando reprovada)" rows={topWords} />
             <section className="dashboard-card">
               <div className="dashboard-section-header">
@@ -701,10 +749,11 @@ function DashboardPage({ user }: { user: User }) {
               </div>
               <div className="dashboard-facts">
                 <div><strong>Fonte:</strong> protocolos, entidades e cursos do Supabase</div>
-                <div><strong>Iniciados:</strong> toda demanda com protocolo aberto na base</div>
-                <div><strong>Finalizados:</strong> status `Finalizado`, `Reprovado` ou `Cancelado`</div>
-                <div><strong>Em andamento:</strong> fluxos fora dos status finais</div>
-                <div><strong>Area:</strong> campo `area` salvo no proprio protocolo</div>
+                <div><strong>Valores dos cursos:</strong> planilha Sebrae recebida em 25/07/2026 e regras vinculadas ao curso</div>
+                <div><strong>Estoque disponivel:</strong> {stockSeats} vaga(s) nas solucoes filtradas</div>
+                <div><strong>Estoque reservado:</strong> {reservedSeats} demanda(s) mantendo vaga ocupada</div>
+                <div><strong>Cursos com valor mapeado:</strong> {trackedCourseCount}</div>
+                <div><strong>Cursos sem valor cadastrado:</strong> {missingValueCount}</div>
               </div>
             </section>
           </div>
@@ -1468,6 +1517,7 @@ function CursosPageV2({ user }: { user: User }) {
     if (!selectedEntity) return false;
     return (!payload.area || course.area === payload.area) && allowedLevels(selectedEntity.nivel).includes(String(course.nivel || ""));
   });
+  const selectedCourse = availableCourses.find((item) => String(item.id) === String(payload.curso_id));
 
   useEffect(() => {
     const next: Row = {};
@@ -1531,9 +1581,10 @@ function CursosPageV2({ user }: { user: User }) {
         <label>Curso
           <select value={payload.curso_id || ""} onChange={(e) => setPayload({ ...payload, curso_id: Number(e.target.value) })} disabled={!payload.area}>
             <option value="">Selecionar</option>
-            {availableCourses.map((item) => <option key={item.id} value={item.id}>{item.curso} · {item.nivel} · estoque {item.estoque_total ?? 0}</option>)}
+            {availableCourses.map((item) => <option key={item.id} value={item.id}>{item.curso} · {item.nivel} · estoque {item.estoque_total ?? 0} · {courseFinancialLabel(item)}</option>)}
           </select>
         </label>
+        {selectedCourse && <div className="course-summary">Estoque disponível: <strong>{selectedCourse.estoque_total ?? 0}</strong> · Valor unitário: <strong>{courseFinancialLabel(selectedCourse)}</strong></div>}
         {payload.curso_id && courseQuestions.loading && <Loading />}
         {payload.curso_id && courseQuestions.error && <ErrorMessage text={courseQuestions.error} />}
         {payload.curso_id && Boolean(courseQuestions.data?.items.length) && (
@@ -1755,10 +1806,10 @@ const OWNER_STAGE_OPTIONS: ConfigOption[] = [
 const CONFIG_SCHEMAS: Record<string, ConfigSchema> = {
   cursos: {
     title: "Cursos",
-    description: "Cadastre cursos sem depender da tabela inteira. Selecione um item, edite os campos e salve.",
+    description: "Cadastre cursos sem depender da tabela inteira. Selecione um item, edite os campos, acompanhe estoque e visualize o valor unitário já vinculado ao curso.",
     addLabel: "Adicionar curso",
     defaultRow: () => ({ curso: "", area: "CIMATEC", nivel: "Básico", descricao: "", carga_horaria: "", estoque_total: 0, owner_email: "", ativo: true }),
-    itemLabel: (row) => `${row.curso || "Novo curso"} · ${row.area || "-"} · ${row.nivel || "-"}`,
+    itemLabel: (row) => `${row.curso || "Novo curso"} · ${row.area || "-"} · ${row.nivel || "-"} · ${courseFinancialLabel(row)}`,
     fields: [
       { key: "curso", label: "Nome do curso", placeholder: "Ex.: Boas práticas de fabricação" },
       { key: "area", label: "Área", type: "select", options: AREA_OPTIONS },
@@ -1844,10 +1895,10 @@ const CONFIG_SCHEMAS: Record<string, ConfigSchema> = {
     ]
   },
   owners_area: {
-    title: "Owners por Área",
-    description: "Defina responsáveis por área e etapa em uma lista simples, com remoção rápida e visual limpa.",
+    title: "Responsáveis do Fluxo",
+    description: "Defina quem recebe e assume cada etapa por área. Para o seu caso, cadastre Agendamento com uma linha para SEBRAE e outra para CIMATEC.",
     addLabel: "Adicionar owner",
-    defaultRow: () => ({ area: "CIMATEC", etapa: "Administrativo", nome: "", email: "", usuario: "", ativo: true }),
+    defaultRow: () => ({ area: "CIMATEC", etapa: "Agendamento", nome: "", email: "", usuario: "", ativo: true }),
     itemLabel: (row) => `${row.area || "Área"} · ${row.etapa || "Etapa"} · ${row.nome || "Novo owner"}`,
     fields: [
       { key: "area", label: "Área", type: "select", options: AREA_OPTIONS },
@@ -2086,6 +2137,12 @@ function ConfigPage() {
       {errorMessage && <div className="alert error">{errorMessage}</div>}
       {table === "usuarios" && !!pendingPasswordUsers.length && (
         <div className="alert warning">Antes de salvar, clique em `Gerar senha` para cada novo usuario adicionado.</div>
+      )}
+      {table === "owners_area" && (
+        <div className="alert warning">Para definir o responsável do agendamento por parceiro, deixe uma linha para `SEBRAE + Agendamento` e outra para `CIMATEC + Agendamento`.</div>
+      )}
+      {table === "cursos" && (
+        <div className="alert warning">Os valores unitários do Sebrae foram carregados do arquivo recebido em 25/07/2026 e são usados no dashboard conforme estoque e fluxos ativos.</div>
       )}
       {table === "notificacoes" ? (
         <>

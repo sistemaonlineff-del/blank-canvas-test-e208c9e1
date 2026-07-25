@@ -1,5 +1,4 @@
 ﻿import { createClient } from "@supabase/supabase-js";
-
 export type User = {
   id: number;
   nome: string;
@@ -256,6 +255,41 @@ async function fetchActiveUsersByRoles(db: ReturnType<typeof ensureSupabase>, ro
   return (data || []).filter((row) => isActive(row) && !dbTrue(row.acesso_pendente));
 }
 
+async function fetchOwnersForStage(
+  db: ReturnType<typeof ensureSupabase>,
+  area: string,
+  status: string,
+  stage: string
+) {
+  const cleanArea = String(area || "").trim();
+  if (!cleanArea) return [];
+  const stageKeys = unique([normalizeStatusKey(status), normalizeStatusKey(stage)]).filter(Boolean);
+  const { data, error } = await db
+    .from("owners_area")
+    .select("*")
+    .eq("area", cleanArea)
+    .eq("ativo", true);
+  throwDb(error);
+  return (data || []).filter((row: Row) => stageKeys.includes(normalizeStatusKey(row.etapa)));
+}
+
+function ownerRecipients(owners: Row[]) {
+  return unique(
+    owners
+      .map((owner) => String(owner.email || owner.usuario || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function ownerDisplayLabel(owners: Row[]) {
+  const labels = unique(
+    owners
+      .map((owner) => String(owner.nome || owner.email || owner.usuario || "").trim())
+      .filter(Boolean)
+  );
+  return labels.join(" / ");
+}
+
 async function queueNotifications(
   db: ReturnType<typeof ensureSupabase>,
   protocolo: string,
@@ -351,32 +385,36 @@ async function fetchStageRecipients(
 ) {
   const recipients = new Set<string>();
   if (row.solicitante_email) recipients.add(String(row.solicitante_email).trim().toLowerCase());
+  const owners = await fetchOwnersForStage(db, String(row.area || ""), nextStatus, nextStage);
+  ownerRecipients(owners).forEach((email) => recipients.add(email));
 
-  const stageRoles = rolesForStatus(nextStatus).filter(
-    (role) => ![ROLE_ADMIN, ROLE_MODERATOR].includes(role)
-  );
+  if (!owners.length) {
+    const stageRoles = rolesForStatus(nextStatus).filter(
+      (role) => ![ROLE_ADMIN, ROLE_MODERATOR].includes(role)
+    );
 
-  if (stageRoles.length) {
-    const users = await fetchActiveUsersByRoles(db, stageRoles);
-    users.forEach((user: Row) => {
-      const email = String(user.email || user.usuario || "").trim().toLowerCase();
-      if (email) recipients.add(email);
-    });
-  }
-
-  if (!stageRoles.length && String(nextStage || "").trim()) {
-    const fallbackRole = String(nextStage || "").trim().toLowerCase();
-    const { data: users, error } = await db
-      .from("usuarios")
-      .select("email,usuario,perfil")
-      .eq("ativo", true);
-    throwDb(error);
-    (users || [])
-      .filter((user: Row) => normalizeRoleKey(user.perfil) === fallbackRole)
-      .forEach((user: Row) => {
+    if (stageRoles.length) {
+      const users = await fetchActiveUsersByRoles(db, stageRoles);
+      users.forEach((user: Row) => {
         const email = String(user.email || user.usuario || "").trim().toLowerCase();
         if (email) recipients.add(email);
       });
+    }
+
+    if (!stageRoles.length && String(nextStage || "").trim()) {
+      const fallbackRole = String(nextStage || "").trim().toLowerCase();
+      const { data: users, error } = await db
+        .from("usuarios")
+        .select("email,usuario,perfil")
+        .eq("ativo", true);
+      throwDb(error);
+      (users || [])
+        .filter((user: Row) => normalizeRoleKey(user.perfil) === fallbackRole)
+        .forEach((user: Row) => {
+          const email = String(user.email || user.usuario || "").trim().toLowerCase();
+          if (email) recipients.add(email);
+        });
+    }
   }
 
   return Array.from(recipients);
@@ -658,7 +696,7 @@ const supabaseApi = {
         fluxos: protocolos.filter((p) => ![STATUS_FINALIZADO, STATUS_CANCELADO, STATUS_REPROVADO].includes(p.status)).length,
         usuariosPendentes: usuarios.filter((u) => dbTrue(u.acesso_pendente) || !u.perfil).length
       },
-      protocolos: protocolos.slice(0, 50),
+      protocolos,
       entidadesPorNivel: entidades,
       cursosPorArea: cursos
     };
@@ -809,6 +847,8 @@ const supabaseApi = {
     );
     const statusInicial = STATUS_VALIDACAO;
     const etapaInicial = "Administrativo";
+    const initialOwners = await fetchOwnersForStage(db, String(payload.area || ""), statusInicial, etapaInicial);
+    const initialResponsible = ownerDisplayLabel(initialOwners) || etapaInicial;
     let stockReserved = false;
 
     const insertPayload = {
@@ -819,7 +859,7 @@ const supabaseApi = {
       pontuacao_curso: pontuacaoCurso,
       status: statusInicial,
       etapa_atual: etapaInicial,
-      responsavel_atual: etapaInicial,
+      responsavel_atual: initialResponsible,
       solicitante_nome: payload.solicitante_nome || "",
       solicitante_email: payload.solicitante_email || "",
       data_abertura: dataMov,
@@ -906,10 +946,11 @@ const supabaseApi = {
     } as Row;
     const [novoStatus, novaEtapa] = nextStep(String(row.status || ""));
     const dataMov = nowStr();
+    const stageOwners = await fetchOwnersForStage(db, String(row.area || ""), novoStatus, novaEtapa);
     const updatePayload: Row = {
       status: novoStatus,
       etapa_atual: novaEtapa,
-      responsavel_atual: novaEtapa,
+      responsavel_atual: ownerDisplayLabel(stageOwners) || novaEtapa,
       data_atualizacao: dataMov
     };
     if (normalizeStatusKey(row.status) === "agendamento") {
@@ -996,6 +1037,9 @@ const supabaseApi = {
       curso: (protocol as any).cursos?.curso
     } as Row;
     const dataMov = nowStr();
+    if (row.curso_id) {
+      await adjustCourseStock(db, Number(row.curso_id), 1);
+    }
     const { error: updateError } = await db
       .from("protocolos")
       .update({
