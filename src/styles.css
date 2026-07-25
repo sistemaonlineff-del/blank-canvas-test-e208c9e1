@@ -95,6 +95,8 @@ nav button.active { background: #dbeafe; color: #1e3a8a; }
 .dashboard-card { padding: 18px; display: grid; gap: 16px; }
 .dashboard-section-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .dashboard-section-header h3 { margin: 0; font-size: 17px; }
+.dashboard-facts { display: grid; gap: 10px; color: #475467; font-size: 13px; font-weight: 700; }
+.dashboard-facts strong { color: #0f172a; }
 .dashboard-pie-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 18px; align-items: center; }
 .dashboard-pie-wrap { display: grid; place-items: center; }
 .dashboard-pie { width: 146px; height: 146px; border-radius: 50%; position: relative; }

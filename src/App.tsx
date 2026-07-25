@@ -384,6 +384,8 @@ function DashboardPage({ user }: { user: User }) {
   });
   const totalDemands = demandRows.length;
   const delayedDemands = demandRows.filter((row: Row) => row.status_executivo === "Atrasada").length;
+  const finalizedDemands = demandRows.filter((row: Row) => ["Finalizado", "Reprovado", "Cancelado"].includes(String(row.status || ""))).length;
+  const activeDemands = demandRows.filter((row: Row) => !["Finalizado", "Reprovado", "Cancelado"].includes(String(row.status || ""))).length;
   const averageHours = demandRows.length
     ? demandRows.reduce((sum: number, row: Row) => sum + Number(row.tempo_total_horas || 0), 0) / demandRows.length
     : 0;
@@ -416,6 +418,15 @@ function DashboardPage({ user }: { user: User }) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 6)
     .map(([label, value]) => ({ label, value }));
+  const areaMap = new Map<string, number>();
+  demandRows.forEach((row: Row) => {
+    const key = String(row.area || "Area nao informada");
+    areaMap.set(key, (areaMap.get(key) || 0) + 1);
+  });
+  const topAreas = Array.from(areaMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([label, value]) => ({ label, value }));
   const stopWords = new Set(["de", "da", "do", "das", "dos", "e", "a", "o", "em", "para", "com", "na", "no", "por", "sem", "que", "uma", "um"]);
   const wordMap = new Map<string, number>();
   demandRows
@@ -433,7 +444,10 @@ function DashboardPage({ user }: { user: User }) {
     .map(([label, value]) => ({ label, value }));
   const tableRows = demandRows.slice(0, 10).map((row: Row) => ({
     Protocolo: row.protocolo,
+    "Status Real": row.status || "-",
     "Status Executivo": row.status_executivo,
+    "Area": row.area || "-",
+    "Curso": row.curso || "-",
     "Data Agendamento": formatDateShort(row.data_agendada),
     "Dias Sem Movimentacao": row.dias_sem_movimentacao,
     "Demandas Paradas +7d": row.parado_7d,
@@ -482,8 +496,11 @@ function DashboardPage({ user }: { user: User }) {
         <section className="dashboard-main">
           <div className="dashboard-metric-grid">
             <Metric title="Quantidade de Demandas" value={totalDemands} />
+            <Metric title="Fluxos Finalizados" value={finalizedDemands} />
+            <Metric title="Fluxos em Andamento" value={activeDemands} />
             <Metric title="Demandas Atrasadas" value={delayedDemands} />
             <Metric title="Tempo Medio Total (Horas)" value={formatNumber(averageHours, 2)} />
+            <Metric title="Areas Atendidas" value={topAreas.length} />
           </div>
           <div className="dashboard-grid-two">
             <DashboardPie title="Quantidade de Demandas por Status" entries={statusEntries} legendTitle="Status" />
@@ -491,7 +508,22 @@ function DashboardPage({ user }: { user: User }) {
           </div>
           <div className="dashboard-grid-two">
             <DashboardBars title="Cursos mais solicitados" rows={topCourses} />
+            <DashboardBars title="Demandas por area" rows={topAreas} />
+          </div>
+          <div className="dashboard-grid-two">
             <DashboardWords title="Palavras que mais aparecem (quando reprovada)" rows={topWords} />
+            <section className="dashboard-card">
+              <div className="dashboard-section-header">
+                <h3>Base real do fluxo</h3>
+              </div>
+              <div className="dashboard-facts">
+                <div><strong>Fonte:</strong> protocolos, entidades e cursos do Supabase</div>
+                <div><strong>Iniciados:</strong> toda demanda com protocolo aberto na base</div>
+                <div><strong>Finalizados:</strong> status `Finalizado`, `Reprovado` ou `Cancelado`</div>
+                <div><strong>Em andamento:</strong> fluxos fora dos status finais</div>
+                <div><strong>Area:</strong> campo `area` salvo no proprio protocolo</div>
+              </div>
+            </section>
           </div>
           <section className="dashboard-card">
             <div className="dashboard-section-header">
