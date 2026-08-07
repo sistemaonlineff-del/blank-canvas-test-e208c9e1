@@ -1,5 +1,5 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
-import { CheckCircle2, Database, FileText, Home, LogOut, RefreshCw, Search, Settings, UserPlus } from "lucide-react";
+import { CheckCircle2, Database, FileText, Home, LogOut, Paperclip, RefreshCw, Search, Settings, Trash2, UserPlus } from "lucide-react";
 import { api, CADASTRO_OPTIONS, Row, User, USER_ROLE_OPTIONS } from "./api";
 import { courseFinancialLabel, formatCompactCurrencyBRL, formatCurrencyBRL, lookupCourseFinancial } from "./courseFinancials";
 import logo1 from "../assets/logo_1.jpeg";
@@ -51,6 +51,14 @@ function normalizeRoleKey(value: unknown) {
 
 function isModerator(user: User) {
   return ["administrador", "moderador"].includes(normalizeRoleKey(user.perfil));
+}
+
+function isAdministrator(user: User) {
+  return normalizeRoleKey(user.perfil) === "administrador";
+}
+
+function isExecutionStatus(status: unknown) {
+  return normalizeRoleKey(status) === "execucao";
 }
 
 function canHandleStatus(user: User, status: unknown) {
@@ -1646,21 +1654,59 @@ function AprovacoesPage({ user }: { user: User }) {
   );
 }
 
-function StatusPageV2() {
+function StatusPageV2({ user }: { user: User }) {
   const { data, loading, error } = useAsync(api.protocols, []);
   const [status, setStatus] = useState("");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState("");
+  const [message, setMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [deleteBusy, setDeleteBusy] = useState("");
   const forms = useAsync(() => selected ? api.forms(selected) : Promise.resolve(null), [selected]);
   if (loading) return <Loading />;
   if (error) return <ErrorMessage text={error} />;
   const rows = data?.items || [];
   const filtered = filterProtocols(rows, status, query);
   const selectedRow = rows.find((row) => row.protocolo === selected);
+
+  async function removeProtocol(row: Row) {
+    const protocolo = String(row.protocolo || "");
+    if (!protocolo) return;
+    if (!window.confirm(`Excluir o protocolo ${protocolo}? Essa ação remove o registro da lista.`)) return;
+    setDeleteBusy(protocolo);
+    setMessage("");
+    setErrorMessage("");
+    try {
+      const result = await api.deleteProtocol(protocolo, user.usuario);
+      setMessage(result.message || "Registro excluido com sucesso.");
+      if (selected === protocolo) setSelected("");
+      window.location.reload();
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erro ao excluir o registro.");
+    } finally {
+      setDeleteBusy("");
+    }
+  }
+
   return (
     <PageBlock title="Consultar Status">
       <ProtocolFilters rows={rows} status={status} setStatus={setStatus} query={query} setQuery={setQuery} />
-      <DataTable rows={filtered} />
+      {message && <div className="alert success">{message}</div>}
+      {errorMessage && <div className="alert error">{errorMessage}</div>}
+      <DataTable
+        rows={filtered}
+        actions={isAdministrator(user) ? (row) => (
+          <button
+            type="button"
+            className="table-icon-button danger-icon"
+            title="Excluir registro"
+            onClick={() => removeProtocol(row)}
+            disabled={deleteBusy === String(row.protocolo || "")}
+          >
+            <Trash2 size={16} />
+          </button>
+        ) : undefined}
+      />
       <div className="inline-form">
         <select value={selected} onChange={(e) => setSelected(e.target.value)}>
           <option value="">Selecionar protocolo</option>
@@ -1685,13 +1731,13 @@ function AprovacoesPageV2({ user, onDone }: { user: User; onDone: () => void }) 
   const filtered = filterProtocols(rows, status, query);
   const selectedRow = rows.find((row) => row.protocolo === selected);
 
-  async function advance(observacao: string, dataAgendada: string) {
+  async function advance(observacao: string, dataAgendada: string, anexo: Row | null) {
     if (!selected) return;
     setSubmitting(true);
     setErrorMessage("");
     setMessage("");
     try {
-      const result = await api.advanceProtocol(selected, user.usuario, observacao, dataAgendada);
+      const result = await api.advanceProtocol(selected, user.usuario, observacao, dataAgendada, anexo);
       setMessage(result.message || "Fluxo atualizado.");
       setSelected("");
     } catch (err: any) {
@@ -2330,7 +2376,15 @@ function UsersManagementTable({ rows, onChange }: { rows: Row[]; onChange: (rows
   );
 }
 
-function DataTable({ rows, empty = "Nenhum registro encontrado." }: { rows: Row[]; empty?: string }) {
+function DataTable({
+  rows,
+  empty = "Nenhum registro encontrado.",
+  actions
+}: {
+  rows: Row[];
+  empty?: string;
+  actions?: (row: Row) => React.ReactNode;
+}) {
   if (!rows.length) return <div className="empty">{empty}</div>;
   const cols = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 12);
   const labelFor = (key: string) =>
@@ -2345,10 +2399,13 @@ function DataTable({ rows, empty = "Nenhum registro encontrado." }: { rows: Row[
   return (
     <div className="table-scroll">
       <table>
-        <thead><tr>{cols.map((col) => <th key={col}>{labelFor(col)}</th>)}</tr></thead>
+        <thead><tr>{cols.map((col) => <th key={col}>{labelFor(col)}</th>)}{actions && <th>Ações</th>}</tr></thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr key={index}>{cols.map((col) => <td key={col}>{cellValue(row[col])}</td>)}</tr>
+            <tr key={index}>
+              {cols.map((col) => <td key={col}>{cellValue(row[col])}</td>)}
+              {actions && <td className="table-actions-cell">{actions(row)}</td>}
+            </tr>
           ))}
         </tbody>
       </table>
@@ -2409,9 +2466,11 @@ function ResponseSection({ title, rows, empty }: { title: string; rows: Row[]; e
   );
 }
 
-function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCancel, onReject, onWaitlist, busy = false }: { row: Row | undefined; forms: any; approval?: boolean; user?: User; onAdvance?: (observacao: string, dataAgendada: string) => Promise<void>; onCancel?: (observacao: string) => Promise<void>; onReject?: (observacao: string) => Promise<void>; onWaitlist?: (observacao: string) => Promise<void>; busy?: boolean }) {
+function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCancel, onReject, onWaitlist, busy = false }: { row: Row | undefined; forms: any; approval?: boolean; user?: User; onAdvance?: (observacao: string, dataAgendada: string, anexo: Row | null) => Promise<void>; onCancel?: (observacao: string) => Promise<void>; onReject?: (observacao: string) => Promise<void>; onWaitlist?: (observacao: string) => Promise<void>; busy?: boolean }) {
   const [observacao, setObservacao] = useState("");
   const [dataAgendada, setDataAgendada] = useState("");
+  const [anexoExecutor, setAnexoExecutor] = useState<Row | null>(null);
+  const [anexoErro, setAnexoErro] = useState("");
   const [osError, setOsError] = useState("");
   const [downloadingOs, setDownloadingOs] = useState(false);
   if (!row) return <div className="empty">Selecione um protocolo para ver os detalhes.</div>;
@@ -2420,6 +2479,15 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
   const statusKey = String(currentRow.status || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const canDownloadOs = ["agendamento", "execucao", "finalizado"].includes(statusKey);
   const needsDecisionButtons = ["validacao administrativa", "analise tecnica"].includes(statusKey);
+  const canAttachExecutorFile = approval && isExecutionStatus(currentRow.status);
+  const anexos = forms?.anexos || [];
+
+  useEffect(() => {
+    setObservacao("");
+    setDataAgendada("");
+    setAnexoExecutor(null);
+    setAnexoErro("");
+  }, [currentRow.protocolo]);
 
   async function downloadOs() {
     setOsError("");
@@ -2431,6 +2499,57 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
     } finally {
       setDownloadingOs(false);
     }
+  }
+
+  async function readAttachment(file: File) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        const [, base64 = ""] = result.split(",");
+        resolve(base64);
+      };
+      reader.onerror = () => reject(new Error("Nao foi possivel ler o arquivo."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleAttachmentChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setAnexoExecutor(null);
+      setAnexoErro("");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setAnexoExecutor(null);
+      setAnexoErro("O anexo deve ter no maximo 5 MB.");
+      return;
+    }
+    try {
+      const conteudo_base64 = await readAttachment(file);
+      setAnexoExecutor({
+        nome: file.name,
+        tipo: file.type || "application/octet-stream",
+        tamanho: file.size,
+        conteudo_base64
+      });
+      setAnexoErro("");
+    } catch (err: any) {
+      setAnexoExecutor(null);
+      setAnexoErro(err.message || "Nao foi possivel preparar o anexo.");
+    }
+  }
+
+  function downloadAttachment(anexo: Row) {
+    const conteudo = String(anexo.conteudo_base64 || "");
+    if (!conteudo) return;
+    const link = document.createElement("a");
+    link.href = `data:${anexo.tipo || "application/octet-stream"};base64,${conteudo}`;
+    link.download = String(anexo.nome || "anexo_executor");
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   }
 
   return (
@@ -2457,10 +2576,22 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
       </div>
       <h3>Histórico de movimentação</h3>
       <DataTable rows={forms?.historico || []} empty="Sem histórico." />
+      {!!anexos.length && (
+        <div className="attachment-list-card">
+          <strong>Anexo do executor</strong>
+          {anexos.map((anexo: Row) => (
+            <button key={String(anexo.id || anexo.nome)} type="button" className="attachment-chip" onClick={() => downloadAttachment(anexo)}>
+              <Paperclip size={14} />
+              {anexo.nome || "Anexo"}
+            </button>
+          ))}
+        </div>
+      )}
       <ResponseSection title="Formulario Geral" rows={forms?.geral || []} empty="Sem respostas do Formulario Geral." />
       <ResponseSection title="BPF" rows={forms?.bpf || []} empty="Sem respostas do BPF." />
       <ResponseSection title="Formulario do Curso" rows={forms?.curso || []} empty="Sem respostas do curso." />
-      {approval && finalizado && <div className="alert error">Este protocolo esta encerrado e nao permite novas acoes.</div>}      {approval && !finalizado && (
+      {approval && finalizado && <div className="alert error">Este protocolo esta encerrado e nao permite novas acoes.</div>}
+      {approval && !finalizado && (
         <div className="approval-actions">
           {String(currentRow.status || "") === "Agendamento" && (
             <label>Data para iniciar execução
@@ -2470,8 +2601,15 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
           <label>Observação da decisão
             <textarea value={observacao} onChange={(e) => setObservacao(e.target.value)} />
           </label>
+          {canAttachExecutorFile && (
+            <label>Anexar arquivo do executor
+              <input type="file" onChange={handleAttachmentChange} />
+              {anexoExecutor && <span className="field-helper">Arquivo pronto: {anexoExecutor.nome}</span>}
+              {anexoErro && <span className="field-helper error-text">{anexoErro}</span>}
+            </label>
+          )}
           <div className="action-row">
-            <button type="button" onClick={() => onAdvance?.(observacao, dataAgendada)} disabled={busy || !user || (String(currentRow.status || "") === "Agendamento" && !dataAgendada)}>
+            <button type="button" onClick={() => onAdvance?.(observacao, dataAgendada, anexoExecutor)} disabled={busy || !user || !!anexoErro || (String(currentRow.status || "") === "Agendamento" && !dataAgendada)}>
               {busy ? "Enviando..." : actionLabel(String(currentRow.status || ""))}
             </button>
             {needsDecisionButtons ? (
@@ -2558,7 +2696,7 @@ export default function App() {
       {page === "entidades" && <EntidadesPage user={user} />}
       {page === "qualificacao" && <QualificacaoPage />}
       {page === "cursos" && <CursosPageV2 user={user} />}
-      {page === "status" && <StatusPageV2 />}
+      {page === "status" && <StatusPageV2 user={user} />}
       {page === "aprovacoes" && <AprovacoesPageV2 user={user} onDone={() => setPage("dashboard")} />}
       {page === "config" && <ConfigPage />}
     </Layout>

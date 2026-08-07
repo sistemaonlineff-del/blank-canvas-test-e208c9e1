@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import os
 import re
 import secrets
@@ -48,6 +49,7 @@ STATUS_FLUXO = [
     "Cancelado",
     "Reprovado",
 ]
+EXECUTOR_ATTACHMENT_MARKER = "__executor_attachment__"
 EDITABLE_TABLES = {
     "cursos": "cursos",
     "perguntas_qualificacao": "perguntas_qualificacao",
@@ -1171,6 +1173,30 @@ def advance_protocol(protocolo: str):
         "INSERT INTO historico_fluxo(protocolo,status_anterior,status_novo,usuario,data_movimento,observacao) VALUES(?,?,?,?,?,?)",
         (protocolo, row.get("status"), novo_status, data.get("usuario", "admin"), data_mov, data.get("observacao", "")),
     )
+    anexo = data.get("anexo") or {}
+    if text_key(row.get("status")) == "execucao" and anexo.get("conteudo_base64"):
+        execute(
+            "DELETE FROM respostas_curso WHERE protocolo=? AND pergunta=?",
+            (protocolo, EXECUTOR_ATTACHMENT_MARKER),
+        )
+        execute(
+            "INSERT INTO respostas_curso(protocolo,pergunta_id,pergunta,resposta,pontuacao,data_resposta) VALUES(?,?,?,?,?,?)",
+            (
+                protocolo,
+                None,
+                EXECUTOR_ATTACHMENT_MARKER,
+                json.dumps(
+                    {
+                        "nome": anexo.get("nome", "anexo"),
+                        "tipo": anexo.get("tipo", "application/octet-stream"),
+                        "tamanho": int(anexo.get("tamanho") or 0),
+                        "conteudo_base64": anexo.get("conteudo_base64", ""),
+                    }
+                ),
+                0,
+                data_mov,
+            ),
+        )
     notify_protocol(
         protocolo,
         row.get("area", ""),
@@ -1180,6 +1206,19 @@ def advance_protocol(protocolo: str):
         data.get("observacao", ""),
     )
     return jsonify({"message": "Fluxo atualizado.", "status": novo_status})
+
+
+@app.delete("/api/protocols/<protocolo>")
+def delete_protocol(protocolo: str):
+    init_db()
+    row = fetch_one("SELECT * FROM protocolos WHERE protocolo=? LIMIT 1", (protocolo,))
+    if not row:
+        return jsonify({"error": "Protocolo não encontrado."}), 404
+    execute("DELETE FROM notificacoes WHERE protocolo=?", (protocolo,))
+    execute("DELETE FROM respostas_curso WHERE protocolo=?", (protocolo,))
+    execute("DELETE FROM historico_fluxo WHERE protocolo=?", (protocolo,))
+    execute("DELETE FROM protocolos WHERE protocolo=?", (protocolo,))
+    return jsonify({"message": "Registro excluído com sucesso."})
 
 
 @app.post("/api/protocols/<protocolo>/cancel")
@@ -1235,11 +1274,34 @@ def protocol_forms(protocolo: str):
     if not prot:
         return jsonify({"error": "Protocolo não encontrado."}), 404
     entidade_id = prot.get("entidade_id")
+    curso_rows = fetch_all("SELECT * FROM respostas_curso WHERE protocolo=? ORDER BY id", (protocolo,))
+    curso = [row for row in curso_rows if row.get("pergunta") != EXECUTOR_ATTACHMENT_MARKER]
+    anexos = []
+    for row in curso_rows:
+        if row.get("pergunta") != EXECUTOR_ATTACHMENT_MARKER:
+            continue
+        try:
+            payload = json.loads(row.get("resposta") or "{}")
+        except Exception:
+            payload = {}
+        anexos.append(
+            {
+                "id": row.get("id"),
+                "protocolo": protocolo,
+                "nome": payload.get("nome", "anexo_executor"),
+                "tipo": payload.get("tipo", "application/octet-stream"),
+                "tamanho": payload.get("tamanho", 0),
+                "conteudo_base64": payload.get("conteudo_base64", ""),
+                "data_resposta": row.get("data_resposta"),
+                "origem": "executor",
+            }
+        )
     return jsonify(
         {
             "geral": fetch_all("SELECT * FROM respostas_entidade WHERE entidade_id=? ORDER BY id", (entidade_id,)),
             "bpf": fetch_all("SELECT * FROM respostas_bpf WHERE entidade_id=? ORDER BY id", (entidade_id,)),
-            "curso": fetch_all("SELECT * FROM respostas_curso WHERE protocolo=? ORDER BY id", (protocolo,)),
+            "curso": curso,
+            "anexos": anexos,
             "historico": fetch_all("SELECT * FROM historico_fluxo WHERE protocolo=? ORDER BY id", (protocolo,)),
         }
     )

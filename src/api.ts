@@ -78,6 +78,7 @@ const ROLE_ANALISTA_ADM = "Analista Administrativo";
 const ROLE_ANALISTA_TECNICO = "Analista Tecnico";
 const ROLE_AGENDAMENTO = "Agendamento";
 const ROLE_EXECUCAO = "Execucao";
+const EXECUTOR_ATTACHMENT_MARKER = "__executor_attachment__";
 
 const FLOW_NOTIFICATION_ORDER = [ROLE_ANALISTA_ADM, ROLE_ANALISTA_TECNICO, ROLE_AGENDAMENTO, ROLE_EXECUCAO];
 
@@ -431,6 +432,41 @@ function protocolSummary(row: Row) {
   ].join("\n");
 }
 
+function splitCourseRows(rawRows: Row[]) {
+  const curso: Row[] = [];
+  const anexos: Row[] = [];
+
+  for (const row of rawRows || []) {
+    if (String(row.pergunta || "") !== EXECUTOR_ATTACHMENT_MARKER) {
+      curso.push(row);
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(String(row.resposta || "{}"));
+      anexos.push({
+        ...parsed,
+        id: row.id,
+        protocolo: row.protocolo,
+        data_resposta: row.data_resposta,
+        origem: "executor"
+      });
+    } catch {
+      anexos.push({
+        id: row.id,
+        protocolo: row.protocolo,
+        nome: "anexo_executor",
+        tipo: "application/octet-stream",
+        conteudo_base64: "",
+        data_resposta: row.data_resposta,
+        origem: "executor"
+      });
+    }
+  }
+
+  return { curso, anexos };
+}
+
 async function notifyRoleGroup(
   db: ReturnType<typeof ensureSupabase>,
   protocolo: string,
@@ -534,14 +570,16 @@ const flaskApi = {
   courseQuestions: (courseId: number) => request<{ items: Row[] }>(`/api/courses/${courseId}/questions`),
   protocols: () => request<{ items: Row[]; status: string[] }>("/api/protocols"),
   createProtocol: (payload: Row) => request<any>("/api/protocols", { method: "POST", body: JSON.stringify(payload) }),
-  advanceProtocol: (protocolo: string, usuario: string, observacao = "", data_agendada = "") =>
-    request<any>(`/api/protocols/${protocolo}/advance`, { method: "POST", body: JSON.stringify({ usuario, observacao, data_agendada }) }),
+  advanceProtocol: (protocolo: string, usuario: string, observacao = "", data_agendada = "", anexo: Row | null = null) =>
+    request<any>(`/api/protocols/${protocolo}/advance`, { method: "POST", body: JSON.stringify({ usuario, observacao, data_agendada, anexo }) }),
   cancelProtocol: (protocolo: string, usuario: string, observacao = "") =>
     request<any>(`/api/protocols/${protocolo}/cancel`, { method: "POST", body: JSON.stringify({ usuario, observacao }) }),
   rejectProtocol: (protocolo: string, usuario: string, observacao = "") =>
     request<any>(`/api/protocols/${protocolo}/cancel`, { method: "POST", body: JSON.stringify({ usuario, observacao: `[REPROVADO] ${observacao}`.trim() }) }),
   waitlistProtocol: (protocolo: string, usuario: string, observacao = "") =>
     request<any>(`/api/protocols/${protocolo}/cancel`, { method: "POST", body: JSON.stringify({ usuario, observacao: `[LISTA DE ESPERA] ${observacao}`.trim() }) }),
+  deleteProtocol: (protocolo: string, usuario: string) =>
+    request<any>(`/api/protocols/${protocolo}`, { method: "DELETE", body: JSON.stringify({ usuario }) }),
   forms: (protocolo: string) => request<any>(`/api/forms/${protocolo}`),
   downloadOs: async (protocolo: string) => {
     const url = `${apiBaseUrl}/api/protocols/${protocolo}/os`;
@@ -831,7 +869,9 @@ const supabaseApi = {
     const { data, error } = await db.from("protocolos").select("*, entidades(entidade,nivel), cursos(curso)").order("id", { ascending: false });
     throwDb(error);
     return {
-      items: (data || []).map((row: any) => ({ ...row, entidade: row.entidades?.entidade, nivel_entidade: row.entidades?.nivel, curso: row.cursos?.curso })),
+      items: (data || [])
+        .filter(isActive)
+        .map((row: any) => ({ ...row, entidade: row.entidades?.entidade, nivel_entidade: row.entidades?.nivel, curso: row.cursos?.curso })),
       status: STATUS_FLUXO
     };
   },
@@ -929,7 +969,7 @@ const supabaseApi = {
     }
   },
 
-  async advanceProtocol(protocolo: string, usuario: string, observacao = "", data_agendada = "") {
+  async advanceProtocol(protocolo: string, usuario: string, observacao = "", data_agendada = "", anexo: Row | null = null) {
     const db = ensureSupabase();
     const { data: protocol, error } = await db
       .from("protocolos")
@@ -967,6 +1007,29 @@ const supabaseApi = {
       observacao
     });
     throwDb(historyError);
+    if (normalizeStatusKey(row.status) === "execucao" && anexo?.conteudo_base64) {
+      const attachmentPayload = {
+        nome: String(anexo.nome || "anexo"),
+        tipo: String(anexo.tipo || "application/octet-stream"),
+        tamanho: Number(anexo.tamanho || 0),
+        conteudo_base64: String(anexo.conteudo_base64 || "")
+      };
+      const { error: deleteAttachmentError } = await db
+        .from("respostas_curso")
+        .delete()
+        .eq("protocolo", protocolo)
+        .eq("pergunta", EXECUTOR_ATTACHMENT_MARKER);
+      throwDb(deleteAttachmentError);
+      const { error: attachmentError } = await db.from("respostas_curso").insert({
+        protocolo,
+        pergunta_id: null,
+        pergunta: EXECUTOR_ATTACHMENT_MARKER,
+        resposta: JSON.stringify(attachmentPayload),
+        pontuacao: 0,
+        data_resposta: dataMov
+      });
+      throwDb(attachmentError);
+    }
     const recipients = await fetchStageRecipients(db, row, novoStatus, novaEtapa);
     const { assunto, corpo } = buildApprovalNotification(row, novoStatus, novaEtapa, observacao, false);
     await queueNotifications(db, protocolo, recipients, assunto, corpo);
@@ -1107,6 +1170,35 @@ const supabaseApi = {
     return { message: "Protocolo enviado para lista de espera.", status: STATUS_LISTA_ESPERA };
   },
 
+  async deleteProtocol(protocolo: string, usuario: string) {
+    const db = ensureSupabase();
+    const { data: protocol, error } = await db
+      .from("protocolos")
+      .select("*")
+      .eq("protocolo", protocolo)
+      .single();
+    throwDb(error);
+
+    const statusKey = normalizeStatusKey(protocol?.status);
+    if (
+      protocol?.curso_id &&
+      ![normalizeStatusKey(STATUS_CANCELADO), normalizeStatusKey(STATUS_REPROVADO), normalizeStatusKey(STATUS_FINALIZADO)].includes(statusKey)
+    ) {
+      await adjustCourseStock(db, Number(protocol.curso_id), 1);
+    }
+
+    const { error: notificationDeleteError } = await db.from("notificacoes").delete().eq("protocolo", protocolo);
+    throwDb(notificationDeleteError);
+    const { error: answersDeleteError } = await db.from("respostas_curso").delete().eq("protocolo", protocolo);
+    throwDb(answersDeleteError);
+    const { error: flowDeleteError } = await db.from("historico_fluxo").delete().eq("protocolo", protocolo);
+    throwDb(flowDeleteError);
+    const { error: protocolDeleteError } = await db.from("protocolos").delete().eq("protocolo", protocolo);
+    throwDb(protocolDeleteError);
+
+    return { message: "Registro excluido com sucesso." };
+  },
+
   async forms(protocolo: string) {
     const db = ensureSupabase();
     const { data: prot, error } = await db.from("protocolos").select("*").eq("protocolo", protocolo).single();
@@ -1118,7 +1210,8 @@ const supabaseApi = {
       db.from("historico_fluxo").select("*").eq("protocolo", protocolo).order("id")
     ]);
     throwDb(geral.error || bpf.error || curso.error || historico.error);
-    return { geral: geral.data || [], bpf: bpf.data || [], curso: curso.data || [], historico: historico.data || [] };
+    const split = splitCourseRows(curso.data || []);
+    return { geral: geral.data || [], bpf: bpf.data || [], curso: split.curso, anexos: split.anexos, historico: historico.data || [] };
   },
 
   async downloadOs(protocolo: string) {
