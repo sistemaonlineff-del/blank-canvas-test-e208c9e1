@@ -37,7 +37,7 @@ APP_URL = (
 ).strip()
 
 NIVEIS = ["Básico", "Intermediário", "Avançado"]
-AREAS_CURSO = ["CIMATEC", "SEBRAE"]
+DEFAULT_AREAS_CURSO = ["CIMATEC", "SEBRAE"]
 FORM_GERAL_PENDENTE = "Formulario geral pendente"
 CADASTRO_INICIAL = "Cadastro inicial"
 STATUS_FLUXO = [
@@ -51,6 +51,7 @@ STATUS_FLUXO = [
 ]
 EXECUTOR_ATTACHMENT_MARKER = "__executor_attachment__"
 EDITABLE_TABLES = {
+    "areas_curso": "areas_curso",
     "cursos": "cursos",
     "perguntas_qualificacao": "perguntas_qualificacao",
     "perguntas_bpf": "perguntas_bpf",
@@ -279,6 +280,11 @@ def init_db():
       estoque_total INTEGER DEFAULT 0,
       ativo INTEGER DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS areas_curso (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome TEXT UNIQUE,
+      ativo INTEGER DEFAULT 1
+    );
     CREATE TABLE IF NOT EXISTS perguntas_qualificacao (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       questionario TEXT,
@@ -461,6 +467,14 @@ def init_db():
             for column, definition in columns.items():
                 if column not in existing_columns:
                     conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column} {definition}")
+        existing_areas = {
+            str(row["nome"]).strip().upper()
+            for row in conn.execute("SELECT nome FROM areas_curso").fetchall()
+            if row["nome"]
+        }
+        for area in DEFAULT_AREAS_CURSO:
+            if area.upper() not in existing_areas:
+                conn.execute("INSERT INTO areas_curso(nome, ativo) VALUES(?, 1)", (area,))
         exists = conn.execute("SELECT COUNT(*) AS total FROM usuarios").fetchone()["total"]
         if not exists:
             conn.execute(

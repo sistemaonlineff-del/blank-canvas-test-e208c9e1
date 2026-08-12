@@ -30,6 +30,7 @@ const pageDescriptions: Record<string, string> = {
 };
 
 const tableLabels: Record<string, string> = {
+  areas_curso: "Áreas / Parceiros",
   cursos: "Cursos",
   perguntas_qualificacao: "Perguntas Entidade",
   perguntas_bpf: "Perguntas BPF",
@@ -1814,7 +1815,7 @@ function AprovacoesPageV2({ user, onDone }: { user: User; onDone: () => void }) 
 
 type ConfigFieldType = "text" | "number" | "textarea" | "select" | "toggle";
 type ConfigOption = { label: string; value: string };
-type ConfigReferenceData = { cursos: Row[]; perguntasCurso: Row[] };
+type ConfigReferenceData = { areasCurso: Row[]; cursos: Row[]; perguntasCurso: Row[] };
 type ConfigFieldDefinition = {
   key: string;
   label: string;
@@ -1827,14 +1828,9 @@ type ConfigSchema = {
   description: string;
   addLabel: string;
   fields: ConfigFieldDefinition[];
-  defaultRow: () => Row;
+  defaultRow: (references: ConfigReferenceData) => Row;
   itemLabel: (row: Row, references: ConfigReferenceData) => string;
 };
-
-const AREA_OPTIONS: ConfigOption[] = [
-  { label: "CIMATEC", value: "CIMATEC" },
-  { label: "SEBRAE", value: "SEBRAE" }
-];
 
 const LEVEL_OPTIONS: ConfigOption[] = [
   { label: "Básico", value: "Básico" },
@@ -1849,16 +1845,39 @@ const OWNER_STAGE_OPTIONS: ConfigOption[] = [
   { label: "Execucao", value: "Execucao" }
 ];
 
+function activeAreaOptions(references: ConfigReferenceData): ConfigOption[] {
+  return (references.areasCurso || [])
+    .filter((row) => row.ativo == null || row.ativo === true || row.ativo === 1 || String(row.ativo) === "true")
+    .map((row) => String(row.nome || "").trim())
+    .filter(Boolean)
+    .map((nome) => ({ label: nome, value: nome }));
+}
+
+function firstAreaValue(references: ConfigReferenceData) {
+  return activeAreaOptions(references)[0]?.value || "";
+}
+
 const CONFIG_SCHEMAS: Record<string, ConfigSchema> = {
+  areas_curso: {
+    title: "Áreas / Parceiros",
+    description: "Cadastre aqui os parceiros disponíveis no sistema, como SEBRAE, CIMATEC e novos que precisarem entrar no fluxo.",
+    addLabel: "Adicionar área",
+    defaultRow: () => ({ nome: "", ativo: true }),
+    itemLabel: (row) => `${row.nome || "Nova área"}`,
+    fields: [
+      { key: "nome", label: "Nome da área / parceiro", placeholder: "Ex.: SENAI" },
+      { key: "ativo", label: "Ativo", type: "toggle" }
+    ]
+  },
   cursos: {
     title: "Cursos",
     description: "Cadastre cursos sem depender da tabela inteira. Selecione um item, edite os campos, acompanhe estoque e visualize o valor unitário já vinculado ao curso.",
     addLabel: "Adicionar curso",
-    defaultRow: () => ({ curso: "", area: "CIMATEC", nivel: "Básico", descricao: "", carga_horaria: "", estoque_total: 0, owner_email: "", ativo: true }),
+    defaultRow: (references) => ({ curso: "", area: firstAreaValue(references), nivel: "Básico", descricao: "", carga_horaria: "", estoque_total: 0, owner_email: "", ativo: true }),
     itemLabel: (row) => `${row.curso || "Novo curso"} · ${row.area || "-"} · ${row.nivel || "-"} · ${courseFinancialLabel(row)}`,
     fields: [
       { key: "curso", label: "Nome do curso", placeholder: "Ex.: Boas práticas de fabricação" },
-      { key: "area", label: "Área", type: "select", options: AREA_OPTIONS },
+      { key: "area", label: "Área", type: "select", options: activeAreaOptions },
       { key: "nivel", label: "Nível", type: "select", options: LEVEL_OPTIONS },
       { key: "descricao", label: "Descrição", type: "textarea" },
       { key: "carga_horaria", label: "Carga horária" },
@@ -1942,12 +1961,12 @@ const CONFIG_SCHEMAS: Record<string, ConfigSchema> = {
   },
   owners_area: {
     title: "Responsáveis do Fluxo",
-    description: "Defina quem recebe e assume cada etapa por área. Para o seu caso, cadastre Agendamento com uma linha para SEBRAE e outra para CIMATEC.",
+    description: "Defina quem recebe e assume cada etapa por área. Use as áreas cadastradas acima para vincular os responsáveis corretos.",
     addLabel: "Adicionar owner",
-    defaultRow: () => ({ area: "CIMATEC", etapa: "Agendamento", nome: "", email: "", usuario: "", ativo: true }),
+    defaultRow: (references) => ({ area: firstAreaValue(references), etapa: "Agendamento", nome: "", email: "", usuario: "", ativo: true }),
     itemLabel: (row) => `${row.area || "Área"} · ${row.etapa || "Etapa"} · ${row.nome || "Novo owner"}`,
     fields: [
-      { key: "area", label: "Área", type: "select", options: AREA_OPTIONS },
+      { key: "area", label: "Área", type: "select", options: activeAreaOptions },
       { key: "etapa", label: "Etapa", type: "select", options: OWNER_STAGE_OPTIONS },
       { key: "nome", label: "Nome" },
       { key: "email", label: "Email" },
@@ -2008,7 +2027,7 @@ function ConfigCollectionEditor({ table, rows, onChange, references }: { table: 
   }, [selectedKey, visibleRows]);
 
   function addRecord() {
-    const nextRow = { ...schema.defaultRow(), _tempKey: makeTempKey() };
+    const nextRow = { ...schema.defaultRow(references), _tempKey: makeTempKey() };
     onChange([nextRow, ...rows]);
     setSelectedKey(String(nextRow._tempKey));
   }
@@ -2136,6 +2155,7 @@ function ConfigPage() {
     table === "usuarios"
       ? rows.filter((row) => !row.id && String(row.email || row.usuario || row.nome || "").trim() && !row.senha_hash)
       : [];
+  const areaReferences = useAsync(() => api.table("areas_curso"), [message]);
   const courseReferences = useAsync(() => api.table("cursos"), [message]);
   const questionReferences = useAsync(() => api.table("perguntas_curso"), [message]);
 
@@ -2172,6 +2192,7 @@ function ConfigPage() {
   }
 
   const references: ConfigReferenceData = {
+    areasCurso: areaReferences.data?.items || [],
     cursos: courseReferences.data?.items || [],
     perguntasCurso: questionReferences.data?.items || []
   };
@@ -2185,7 +2206,7 @@ function ConfigPage() {
         <div className="alert warning">Antes de salvar, clique em `Gerar senha` para cada novo usuario adicionado.</div>
       )}
       {table === "owners_area" && (
-        <div className="alert warning">Para definir o responsável do agendamento por parceiro, deixe uma linha para `SEBRAE + Agendamento` e outra para `CIMATEC + Agendamento`.</div>
+        <div className="alert warning">Cadastre os responsáveis por etapa usando as áreas criadas em `Áreas / Parceiros`.</div>
       )}
       {table === "cursos" && (
         <div className="alert warning">Os valores unitários do Sebrae foram carregados do arquivo recebido em 25/07/2026 e são usados no dashboard conforme estoque e fluxos ativos.</div>
