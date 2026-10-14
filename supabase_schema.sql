@@ -67,6 +67,7 @@ create table if not exists cursos (
   carga_horaria text,
   owner_email text,
   estoque_total integer default 0,
+  valor_unitario numeric check (valor_unitario >= 0 and valor_unitario < 'Infinity'::numeric and valor_unitario = round(valor_unitario, 2)),
   ativo boolean default true
 );
 

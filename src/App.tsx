@@ -493,7 +493,7 @@ function DashboardPage({ user }: { user: User }) {
     const stalledDays = diffDays(row.data_atualizacao || row.data_abertura);
     return {
       ...row,
-      financial: lookupCourseFinancial({ id: row.curso_id, curso: row.curso, area: row.area }),
+      financial: lookupCourseFinancial({ id: row.curso_id, curso: row.curso, area: row.area, valor_unitario: row.valor_unitario }),
       status_executivo: executiveStatus(row),
       dias_sem_movimentacao: stalledDays,
       parado_7d: stalledDays > 7 ? 1 : 0,
@@ -1813,7 +1813,7 @@ function AprovacoesPageV2({ user, onDone }: { user: User; onDone: () => void }) 
   );
 }
 
-type ConfigFieldType = "text" | "number" | "textarea" | "select" | "toggle";
+type ConfigFieldType = "text" | "number" | "money" | "textarea" | "select" | "toggle";
 type ConfigOption = { label: string; value: string };
 type ConfigReferenceData = { areasCurso: Row[]; cursos: Row[]; perguntasCurso: Row[] };
 type ConfigFieldDefinition = {
@@ -1873,7 +1873,7 @@ const CONFIG_SCHEMAS: Record<string, ConfigSchema> = {
     title: "Cursos",
     description: "Cadastre cursos sem depender da tabela inteira. Selecione um item, edite os campos, acompanhe estoque e visualize o valor unitário já vinculado ao curso.",
     addLabel: "Adicionar curso",
-    defaultRow: (references) => ({ curso: "", area: firstAreaValue(references), nivel: "Básico", descricao: "", carga_horaria: "", estoque_total: 0, owner_email: "", ativo: true }),
+    defaultRow: (references) => ({ curso: "", area: firstAreaValue(references), nivel: "Básico", descricao: "", carga_horaria: "", estoque_total: 0, valor_unitario: null, owner_email: "", ativo: true }),
     itemLabel: (row) => `${row.curso || "Novo curso"} · ${row.area || "-"} · ${row.nivel || "-"} · ${courseFinancialLabel(row)}`,
     fields: [
       { key: "curso", label: "Nome do curso", placeholder: "Ex.: Boas práticas de fabricação" },
@@ -1882,6 +1882,7 @@ const CONFIG_SCHEMAS: Record<string, ConfigSchema> = {
       { key: "descricao", label: "Descrição", type: "textarea" },
       { key: "carga_horaria", label: "Carga horária" },
       { key: "estoque_total", label: "Estoque total", type: "number" },
+      { key: "valor_unitario", label: "Valor unitário (R$)", type: "money", placeholder: "0,00" },
       { key: "owner_email", label: "Email do responsável" },
       { key: "ativo", label: "Ativo", type: "toggle" }
     ]
@@ -2095,7 +2096,9 @@ function ConfigCollectionEditor({ table, rows, onChange, references }: { table: 
             </div>
             <div className="form-grid">
               {schema.fields.map((field) => {
-                const value = selectedRow[field.key];
+                const value = field.key === "valor_unitario"
+                  ? selectedRow.valor_unitario ?? lookupCourseFinancial(selectedRow)?.unitValue
+                  : selectedRow[field.key];
                 const options = fieldOptions(field, references);
                 if (field.type === "textarea") {
                   return (
@@ -2129,7 +2132,8 @@ function ConfigCollectionEditor({ table, rows, onChange, references }: { table: 
                     {field.label}
                     <input
                       type={field.type === "number" ? "number" : "text"}
-                      value={String(value ?? "")}
+                      inputMode={field.type === "money" ? "decimal" : undefined}
+                      value={field.type === "money" && typeof value === "number" ? value.toFixed(2).replace(".", ",") : String(value ?? "")}
                       placeholder={field.placeholder || ""}
                       onChange={(e) => updateRecord(String(selectedRow.id ?? selectedRow._tempKey ?? ""), field.key, field.type === "number" ? e.target.value : e.target.value)}
                     />
@@ -2164,16 +2168,19 @@ function ConfigPage() {
     api.table(table)
       .then((data) => setRows(data.items))
       .catch((err: any) => setErrorMessage(err.message || "Erro ao carregar tabela."));
-  }, [table, message]);
+  }, [table]);
 
   async function save() {
     setErrorMessage("");
+    setMessage("");
     if (table === "usuarios" && pendingPasswordUsers.length) {
       setErrorMessage("Gere a senha temporaria dos novos usuarios antes de salvar a tabela.");
       return;
     }
     try {
       await api.saveTable(table, rows);
+      const saved = await api.table(table);
+      setRows(saved.items);
       setMessage("Tabela salva.");
     } catch (err: any) {
       setErrorMessage(err.message || "Erro ao salvar tabela.");

@@ -1,4 +1,5 @@
 ﻿import { createClient } from "@supabase/supabase-js";
+import { normalizeCourseUnitValue } from "./courseFinancials";
 export type User = {
   id: number;
   nome: string;
@@ -486,6 +487,9 @@ async function notifyRoleGroup(
 }
 
 function normalizeTableRow(table: string, row: Row) {
+  if (table === "cursos" && Object.prototype.hasOwnProperty.call(row, "valor_unitario")) {
+    return { ...row, valor_unitario: normalizeCourseUnitValue(row.valor_unitario) };
+  }
   if (table !== "usuarios") return row;
   const normalized: Row = {
     ...row,
@@ -592,7 +596,7 @@ const flaskApi = {
     ),
   table: (table: string) => request<{ items: Row[] }>(`/api/admin/table/${table}`),
   saveTable: (table: string, rows: Row[]) =>
-    request<any>(`/api/admin/table/${table}`, { method: "POST", body: JSON.stringify({ rows }) })
+    request<any>(`/api/admin/table/${table}`, { method: "POST", body: JSON.stringify({ rows: rows.map((row) => normalizeTableRow(table, { ...row })) }) })
 };
 
 const supabaseApi = {
@@ -708,7 +712,7 @@ const supabaseApi = {
     const [entidadesRes, cursosRes, protocolosRes, usuariosRes] = await Promise.all([
       db.from("entidades").select("*"),
       db.from("cursos").select("*"),
-      db.from("protocolos").select("*, entidades(*), cursos(curso)").order("id", { ascending: false }),
+      db.from("protocolos").select("*, entidades(*), cursos(*)").order("id", { ascending: false }),
       db.from("usuarios").select("*")
     ]);
     throwDb(entidadesRes.error || cursosRes.error || protocolosRes.error || usuariosRes.error);
@@ -721,7 +725,8 @@ const supabaseApi = {
       nivel_entidade: row.entidades?.nivel,
       nome_coordenador: row.entidades?.nome_coordenador,
       municipio_entidade: row.entidades?.municipio_entidade,
-      curso: row.cursos?.curso
+      curso: row.cursos?.curso,
+      valor_unitario: row.cursos?.valor_unitario
     }));
     const usuarios = (usuariosRes.data || []).filter(isActive);
     return {
