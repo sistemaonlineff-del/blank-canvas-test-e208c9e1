@@ -12,7 +12,7 @@ type AnswerValue = string | string[];
 const pageLabels: Record<Page, string> = {
   dashboard: "Dashboard",
   qualificacao: "Qualificar Nova Entidade",
-  cursos: "Cursos",
+  cursos: "Soluções",
   status: "Consultar Status",
   aprovacoes: "Minhas Aprovações",
   entidades: "Entidades",
@@ -22,20 +22,20 @@ const pageLabels: Record<Page, string> = {
 const pageDescriptions: Record<string, string> = {
   Dashboard: "Acompanhe o funil completo das demandas com visão gerencial, filtros dinâmicos e exportação da base real.",
   "Qualificar Nova Entidade": "Conduza o cadastro, o formulário geral e o BPF em uma jornada mais clara e organizada.",
-  Cursos: "Abra novas demandas de capacitação com escolha guiada da entidade, área, curso e questionário.",
+  Soluções: "Abra novas demandas de capacitação com escolha guiada da entidade, área, solução e questionário.",
   "Consultar Status": "Pesquise protocolos, acompanhe a linha do tempo e visualize todos os detalhes do fluxo.",
   "Minhas Aprovações": "Avalie, aprove, reprova ou encaminhe demandas com contexto completo em uma única tela.",
   Entidades: "Cadastre, localize e mantenha os dados principais das entidades com muito mais controle.",
-  Configurações: "Gerencie cursos, perguntas, alternativas, owners e usuários com uma experiência mais enxuta."
+  Configurações: "Gerencie soluções, perguntas, alternativas, owners e usuários com uma experiência mais enxuta."
 };
 
 const tableLabels: Record<string, string> = {
   areas_curso: "Áreas / Parceiros",
-  cursos: "Cursos",
+  cursos: "Soluções",
   perguntas_qualificacao: "Perguntas Entidade",
   perguntas_bpf: "Perguntas BPF",
-  perguntas_curso: "Perguntas Curso",
-  alternativas_curso: "Alternativas Curso",
+  perguntas_curso: "Perguntas da Solução",
+  alternativas_curso: "Alternativas da Solução",
   owners_area: "Responsáveis do Fluxo",
   entidades: "Entidades",
   usuarios: "Usuários",
@@ -164,7 +164,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
       </section>
       <form className="login-card" onSubmit={mode === "register" ? register : mode === "password" ? changePassword : submit}>
         <h2>{mode === "register" ? "Criar novo usuario" : mode === "password" ? "Definir nova senha" : "Acesso ao sistema"}</h2>
-        <p>{mode === "register" ? "Informe seu e-mail para receber uma senha temporaria." : mode === "password" ? "Cadastre uma nova senha para continuar." : "Entre para acompanhar qualificacoes, cursos e fluxos."}</p>
+        <p>{mode === "register" ? "Informe seu e-mail para receber uma senha temporaria." : mode === "password" ? "Cadastre uma nova senha para continuar." : "Entre para acompanhar qualificacoes, soluções e fluxos."}</p>
         {mode !== "password" && (
           <>
             <label>E-mail ou usuario</label>
@@ -504,12 +504,12 @@ function DashboardPage({ user }: { user: User }) {
   const demandRows = enrichedRows.filter((row: Row) => {
     if (statusFilter && row.status_executivo !== statusFilter) return false;
     if (coordinatorFilter && String(row.nome_coordenador || "Sem coordenador") !== coordinatorFilter) return false;
-    if (courseFilter && String(row.curso || "Curso nao informado") !== courseFilter) return false;
+    if (courseFilter && String(row.curso || "Solução não informada") !== courseFilter) return false;
     if (areaFilter && String(row.area || "Area nao informada") !== areaFilter) return false;
     return true;
   });
   const visibleStockCourses = courses.filter((course: Row) => {
-    if (courseFilter && String(course.curso || "Curso nao informado") !== courseFilter) return false;
+    if (courseFilter && String(course.curso || "Solução não informada") !== courseFilter) return false;
     if (areaFilter && String(course.area || "Area nao informada") !== areaFilter) return false;
     return true;
   });
@@ -556,7 +556,7 @@ function DashboardPage({ user }: { user: User }) {
     .map(([label, value], index) => ({ label, value, color: coordinatorPalette[index % coordinatorPalette.length] }));
   const courseMap = new Map<string, number>();
   demandRows.forEach((row: Row) => {
-    const key = String(row.curso || "Curso nao informado");
+    const key = String(row.curso || "Solução não informada");
     courseMap.set(key, (courseMap.get(key) || 0) + 1);
   });
   const topCourses = Array.from(courseMap.entries())
@@ -602,7 +602,7 @@ function DashboardPage({ user }: { user: User }) {
     "Status Real": row.status || "-",
     "Status Executivo": row.status_executivo,
     "Area": row.area || "-",
-    "Curso": row.curso || "-",
+    "Solução": row.curso || "-",
     "Valor Unitario": row.financial ? formatCurrencyBRL(Number(row.financial.unitValue || 0)) : "Sem valor",
     "Data Agendamento": formatDateShort(row.data_agendada),
     "Dias Sem Movimentacao": row.dias_sem_movimentacao,
@@ -613,7 +613,7 @@ function DashboardPage({ user }: { user: User }) {
   const activeFilters = [
     statusFilter ? { key: "status", label: `Status: ${statusFilter}` } : null,
     coordinatorFilter ? { key: "coordenador", label: `Coordenador: ${coordinatorFilter}` } : null,
-    courseFilter ? { key: "curso", label: `Curso: ${courseFilter}` } : null,
+    courseFilter ? { key: "curso", label: `Solução: ${courseFilter}` } : null,
     areaFilter ? { key: "area", label: `Area: ${areaFilter}` } : null
   ].filter(Boolean) as { key: string; label: string }[];
 
@@ -632,7 +632,7 @@ function DashboardPage({ user }: { user: User }) {
       "Etapa Atual": row.etapa_atual || "-",
       "Responsavel Atual": row.responsavel_atual || "-",
       Area: row.area || "-",
-      Curso: row.curso || "-",
+      Solução: row.curso || "-",
       Entidade: row.entidade || "-",
       CNPJ: row.cnpj || "-",
       Coordenador: row.nome_coordenador || "-",
@@ -643,7 +643,7 @@ function DashboardPage({ user }: { user: User }) {
       "Dias Sem Movimentacao": row.dias_sem_movimentacao,
       "Tempo Total (Min)": row.tempo_total_min,
       "Tempo Medio Total (Horas)": formatNumber(row.tempo_total_horas, 2),
-      "Pontuacao Curso": row.pontuacao_curso ?? 0,
+      "Pontuação da Solução": row.pontuacao_curso ?? 0,
       Observacao: row.observacao || ""
     }));
     downloadSpreadsheet(`fluxos-dashboard-${new Date().toISOString().slice(0, 10)}.csv`, exportRows);
@@ -733,7 +733,7 @@ function DashboardPage({ user }: { user: User }) {
           </div>
           <div className="dashboard-grid-two">
             <DashboardBars
-              title="Cursos mais solicitados"
+              title="Soluções mais solicitadas"
               rows={topCourses}
               selectedLabel={courseFilter}
               onSelect={(label) => setCourseFilter((current) => current === label ? "" : label)}
@@ -757,12 +757,12 @@ function DashboardPage({ user }: { user: User }) {
                 <h3>Base real do fluxo</h3>
               </div>
               <div className="dashboard-facts">
-                <div><strong>Fonte:</strong> protocolos, entidades e cursos do Supabase</div>
-                <div><strong>Valores dos cursos:</strong> planilha Sebrae recebida em 25/07/2026 e regras vinculadas ao curso</div>
+                <div><strong>Fonte:</strong> protocolos, entidades e soluções do Supabase</div>
+                <div><strong>Valores das soluções:</strong> planilha Sebrae recebida em 25/07/2026 e regras vinculadas à solução</div>
                 <div><strong>Estoque disponivel:</strong> {stockSeats} vaga(s) nas solucoes filtradas</div>
                 <div><strong>Estoque reservado:</strong> {reservedSeats} demanda(s) mantendo vaga ocupada</div>
-                <div><strong>Cursos com valor mapeado:</strong> {trackedCourseCount}</div>
-                <div><strong>Cursos sem valor cadastrado:</strong> {missingValueCount}</div>
+                <div><strong>Soluções com valor mapeado:</strong> {trackedCourseCount}</div>
+                <div><strong>Soluções sem valor cadastrado:</strong> {missingValueCount}</div>
               </div>
             </section>
           </div>
@@ -1486,7 +1486,7 @@ function CursosPage({ user }: { user: User }) {
   }
 
   return (
-    <PageBlock title="Cursos">
+    <PageBlock title="Soluções">
       <form className="panel" onSubmit={submit}>
         <label>Entidade
           <select value={payload.entidade_id || ""} onChange={(e) => setPayload({ ...payload, entidade_id: Number(e.target.value) })}>
@@ -1494,7 +1494,7 @@ function CursosPage({ user }: { user: User }) {
             {qualified.map((item) => <option key={item.id} value={item.id}>{item.entidade} · {item.nivel}</option>)}
           </select>
         </label>
-        <label>Curso
+        <label>Solução
           <select value={payload.curso_id || ""} onChange={(e) => setPayload({ ...payload, curso_id: Number(e.target.value) })}>
             <option value="">Selecionar</option>
             {(courses.data?.items || []).map((item) => <option key={item.id} value={item.id}>{item.curso} · {item.area} · {item.nivel}</option>)}
@@ -1563,14 +1563,14 @@ function CursosPageV2({ user }: { user: User }) {
       setPayload({});
       setAnswers({});
     } catch (err: any) {
-      setErrorMessage(err.message || "Erro ao salvar demanda do curso.");
+      setErrorMessage(err.message || "Erro ao salvar demanda da solução.");
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <PageBlock title="Cursos">
+    <PageBlock title="Soluções">
       <form className="panel" onSubmit={submit}>
         <EntitySearchField
           label="Entidade"
@@ -1581,13 +1581,13 @@ function CursosPageV2({ user }: { user: User }) {
           onChange={(item) => setPayload({ entidade_id: item ? Number(item.id) : "", area: "", curso_id: "" })}
         />
         {selectedEntity && <div className="course-summary">Nível da entidade: <strong>{selectedEntity.nivel}</strong></div>}
-        <label>Área do curso
+        <label>Área da solução
           <select value={payload.area || ""} onChange={(e) => setPayload({ ...payload, area: e.target.value, curso_id: "" })} disabled={!selectedEntity}>
             <option value="">Selecionar</option>
             {areas.map((area) => <option key={area} value={area}>{area}</option>)}
           </select>
         </label>
-        <label>Curso
+        <label>Solução
           <select value={payload.curso_id || ""} onChange={(e) => setPayload({ ...payload, curso_id: Number(e.target.value) })} disabled={!payload.area}>
             <option value="">Selecionar</option>
             {availableCourses.map((item) => <option key={item.id} value={item.id}>{item.curso} · {item.nivel} · estoque {item.estoque_total ?? 0} · {courseFinancialLabel(item)}</option>)}
@@ -1605,7 +1605,7 @@ function CursosPageV2({ user }: { user: User }) {
           </div>
         )}
         {payload.curso_id && !courseQuestions.loading && !courseQuestions.error && !courseQuestions.data?.items.length && (
-          <div className="alert warning">Este curso ainda nao possui questionario cadastrado. Voce pode salvar e seguir o fluxo normalmente.</div>
+          <div className="alert warning">Esta solução ainda nao possui questionario cadastrado. Voce pode salvar e seguir o fluxo normalmente.</div>
         )}
         <label>Observação
           <textarea value={payload.observacao || ""} onChange={(e) => setPayload({ ...payload, observacao: e.target.value })} />
@@ -1614,7 +1614,7 @@ function CursosPageV2({ user }: { user: User }) {
         <button type="submit" disabled={!payload.entidade_id || !payload.curso_id || submitting}>{submitting ? "Salvando..." : "Salvar e iniciar fluxo"}</button>
       </form>
       {message && <div className="alert success">{message}</div>}
-      {!qualified.length && <div className="empty">Finalize o Formulário Geral e o BPF de uma entidade para liberar cursos.</div>}
+      {!qualified.length && <div className="empty">Finalize o Formulário Geral e o BPF de uma entidade para liberar soluções.</div>}
     </PageBlock>
   );
 }
@@ -1870,13 +1870,13 @@ const CONFIG_SCHEMAS: Record<string, ConfigSchema> = {
     ]
   },
   cursos: {
-    title: "Cursos",
-    description: "Cadastre cursos sem depender da tabela inteira. Selecione um item, edite os campos, acompanhe estoque e visualize o valor unitário já vinculado ao curso.",
-    addLabel: "Adicionar curso",
+    title: "Soluções",
+    description: "Cadastre soluções sem depender da tabela inteira. Selecione um item, edite os campos, acompanhe estoque e visualize o valor unitário já vinculado à solução.",
+    addLabel: "Adicionar solução",
     defaultRow: (references) => ({ curso: "", area: firstAreaValue(references), nivel: "Básico", descricao: "", carga_horaria: "", estoque_total: 0, valor_unitario: null, owner_email: "", ativo: true }),
-    itemLabel: (row) => `${row.curso || "Novo curso"} · ${row.area || "-"} · ${row.nivel || "-"} · ${courseFinancialLabel(row)}`,
+    itemLabel: (row) => `${row.curso || "Nova solução"} · ${row.area || "-"} · ${row.nivel || "-"} · ${courseFinancialLabel(row)}`,
     fields: [
-      { key: "curso", label: "Nome do curso", placeholder: "Ex.: Boas práticas de fabricação" },
+      { key: "curso", label: "Nome da solução", placeholder: "Ex.: Boas práticas de fabricação" },
       { key: "area", label: "Área", type: "select", options: activeAreaOptions },
       { key: "nivel", label: "Nível", type: "select", options: LEVEL_OPTIONS },
       { key: "descricao", label: "Descrição", type: "textarea" },
@@ -1927,16 +1927,16 @@ const CONFIG_SCHEMAS: Record<string, ConfigSchema> = {
     ]
   },
   perguntas_curso: {
-    title: "Perguntas Curso",
-    description: "Escolha o curso, defina a ordem e escreva a pergunta sem precisar navegar por uma planilha gigante.",
-    addLabel: "Adicionar pergunta de curso",
+    title: "Perguntas da Solução",
+    description: "Escolha a solução, defina a ordem e escreva a pergunta sem precisar navegar por uma planilha gigante.",
+    addLabel: "Adicionar pergunta da solução",
     defaultRow: () => ({ curso_id: "", ordem: "", pergunta: "", pontos_sim: 1, ativo: true }),
     itemLabel: (row, references) => {
       const course = references.cursos.find((item) => String(item.id) === String(row.curso_id));
-      return `${course?.curso || "Curso"} · ${row.ordem || "?"} · ${row.pergunta || "Nova pergunta"}`;
+      return `${course?.curso || "Solução"} · ${row.ordem || "?"} · ${row.pergunta || "Nova pergunta"}`;
     },
     fields: [
-      { key: "curso_id", label: "Curso", type: "select", options: (references) => references.cursos.map((item) => ({ label: `${item.curso} · ${item.area || "-"}`, value: String(item.id) })) },
+      { key: "curso_id", label: "Solução", type: "select", options: (references) => references.cursos.map((item) => ({ label: `${item.curso} · ${item.area || "-"}`, value: String(item.id) })) },
       { key: "ordem", label: "Ordem", type: "number" },
       { key: "pergunta", label: "Pergunta", type: "textarea" },
       { key: "pontos_sim", label: "Pontos padrão", type: "number" },
@@ -1944,7 +1944,7 @@ const CONFIG_SCHEMAS: Record<string, ConfigSchema> = {
     ]
   },
   alternativas_curso: {
-    title: "Alternativas Curso",
+    title: "Alternativas da Solução",
     description: "Cadastre as alternativas vinculadas à pergunta correta, com ordem e pontuação separadas.",
     addLabel: "Adicionar alternativa",
     defaultRow: () => ({ pergunta_id: "", ordem: "", alternativa: "", pontos: 0, ativo: true }),
@@ -1953,7 +1953,7 @@ const CONFIG_SCHEMAS: Record<string, ConfigSchema> = {
       return `${question?.pergunta || "Pergunta"} · ${row.ordem || "?"} · ${row.alternativa || "Nova alternativa"}`;
     },
     fields: [
-      { key: "pergunta_id", label: "Pergunta do curso", type: "select", options: (references) => references.perguntasCurso.map((item) => ({ label: `${item.id} · ${item.pergunta}`, value: String(item.id) })) },
+      { key: "pergunta_id", label: "Pergunta da solução", type: "select", options: (references) => references.perguntasCurso.map((item) => ({ label: `${item.id} · ${item.pergunta}`, value: String(item.id) })) },
       { key: "ordem", label: "Ordem", type: "number" },
       { key: "alternativa", label: "Alternativa", type: "textarea" },
       { key: "pontos", label: "Pontos", type: "number" },
@@ -2418,7 +2418,9 @@ function DataTable({
   const labelFor = (key: string) =>
     key
       .replace(/_/g, " ")
-      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+      .replace(/(^|[^\p{L}\p{N}])\p{L}/gu, (letter) => letter.toUpperCase())
+      .replace(/\bCursos\b/g, "Soluções")
+      .replace(/\bCurso\b/g, "Solução");
   const cellValue = (value: any) => {
     if (value == null || value === "") return "—";
     if (typeof value === "boolean") return value ? "Sim" : "Não";
@@ -2478,7 +2480,7 @@ function ProtocolFilters({ rows, status, setStatus, query, setQuery }: { rows: R
         </select>
       </label>
       <label>Buscar
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar protocolo, entidade, curso ou área" />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar protocolo, entidade, solução ou área" />
       </label>
       <div className="filter-result">{filteredCount} registro(s)</div>
     </div>
@@ -2600,7 +2602,7 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
         <Metric title="Área" value={currentRow.area || "-"} />
         <Metric title="Responsável" value={currentRow.responsavel_atual || currentRow.etapa_atual || "-"} />
         <Metric title="Agendamento" value={currentRow.data_agendada || "-"} />
-        <Metric title="Pontuação curso" value={currentRow.pontuacao_curso ?? 0} />
+        <Metric title="Pontuação da solução" value={currentRow.pontuacao_curso ?? 0} />
       </div>
       <h3>Histórico de movimentação</h3>
       <DataTable rows={forms?.historico || []} empty="Sem histórico." />
@@ -2617,7 +2619,7 @@ function ProtocolDetails({ row, forms, approval = false, user, onAdvance, onCanc
       )}
       <ResponseSection title="Formulario Geral" rows={forms?.geral || []} empty="Sem respostas do Formulario Geral." />
       <ResponseSection title="BPF" rows={forms?.bpf || []} empty="Sem respostas do BPF." />
-      <ResponseSection title="Formulario do Curso" rows={forms?.curso || []} empty="Sem respostas do curso." />
+      <ResponseSection title="Formulário da Solução" rows={forms?.curso || []} empty="Sem respostas da solução." />
       {approval && finalizado && <div className="alert error">Este protocolo esta encerrado e nao permite novas acoes.</div>}
       {approval && !finalizado && (
         <div className="approval-actions">

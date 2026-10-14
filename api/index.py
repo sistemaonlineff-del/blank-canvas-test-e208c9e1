@@ -771,7 +771,7 @@ def generate_filled_os(protocolo: str, usuario: str, observacao: str = "") -> tu
         ]),
         docx_section("4. DADOS DA DEMANDA"),
         docx_table([
-            [f"Curso/Solução: {row.get('curso') or '-'}", f"Área: {row.get('area') or '-'}"],
+            [f"Solução: {row.get('curso') or '-'}", f"Área: {row.get('area') or '-'}"],
             [f"Observação da análise técnica: {observacao or '-'}", ""],
         ]),
     ]
@@ -1065,7 +1065,7 @@ def save_bpf():
             normalize_sql("UPDATE entidades SET status_qualificacao='Concluída', pontuacao=COALESCE(pontuacao,0)+? WHERE id=?"),
             (pontos, entidade_id),
         )
-    return jsonify({"message": "BPF salvo. Entidade liberada para cursos."})
+    return jsonify({"message": "BPF salvo. Entidade liberada para soluções."})
 
 
 @app.get("/api/courses")
@@ -1525,7 +1525,7 @@ def build_protocol_notification(protocolo: str, area: str, etapa: str, status: s
         f"Numero do protocolo: {protocolo}\n"
         f"Entidade: {entidade}\n"
         f"CNPJ: {cnpj}\n"
-        f"Curso: {curso}\n"
+        f"Solução: {curso}\n"
         f"Area responsavel: {area_nome}\n"
         f"Etapa atual: {etapa_nome}\n"
         f"Status do fluxo: {status_nome}\n"

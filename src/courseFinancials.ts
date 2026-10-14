@@ -223,7 +223,7 @@ export function lookupCourseFinancial(course: CourseLike | string | null | undef
   if (typeof course !== "object" || !course) return legacy;
   try {
     const unitValue = normalizeCourseUnitValue(course.valor_unitario);
-    return unitValue == null ? legacy : { ...legacy, unitValue, source: "Cadastro do curso" };
+    return unitValue == null ? legacy : { ...legacy, unitValue, source: "Cadastro da solução" };
   } catch {
     return null;
   }

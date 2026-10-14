@@ -20,7 +20,7 @@ test("registered prices override legacy prices and preserve planned quantities",
   const result = lookupCourseFinancial({ id: 27, valor_unitario: "1234,56" });
   assert.equal(result.unitValue, 1234.56);
   assert.equal(result.plannedQuantity, 20);
-  assert.equal(result.source, "Cadastro do curso");
+  assert.equal(result.source, "Cadastro da solução");
   assert.equal(lookupCourseFinancial({ id: 27, valor_unitario: 0 }).unitValue, 0);
   assert.equal(lookupCourseFinancial({ curso: "Curso novo", valor_unitario: 10.5 }).unitValue, 10.5);
   assert.match(courseFinancialLabel({ valor_unitario: 10.5 }), /10,50/);
