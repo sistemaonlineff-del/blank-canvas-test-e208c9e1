@@ -191,7 +191,7 @@ function downloadBlob(blob: Blob, filename: string) {
 async function buildProtocolOsDocument(protocol: Row) {
   const rows: Array<[string, unknown, string, unknown]> = [
     ["Protocolo", protocol.protocolo, "Status", protocol.status],
-    ["Entidade", protocol.entidade, "Curso", protocol.curso],
+    ["Entidade", protocol.entidade, "Solução", protocol.curso],
     ["Area", protocol.area, "Nivel da entidade", protocol.nivel_entidade],
     ["Solicitante", protocol.solicitante_nome, "E-mail", protocol.solicitante_email],
     ["Data de abertura", protocol.data_abertura, "Data agendada", protocol.data_agendada],
@@ -344,7 +344,7 @@ function buildApprovalNotification(row: Row, nextStatus: string, nextStage: stri
         `Numero do protocolo: ${safeText(row.protocolo)}`,
         `Entidade: ${safeText(row.entidade)}`,
         `CNPJ: ${safeText(row.cnpj)}`,
-        `Curso: ${safeText(row.curso)}`,
+        `Solução: ${safeText(row.curso)}`,
         `Area responsavel: ${safeText(row.area)}`,
         `Etapa atual: ${safeText(nextStage)}`,
         `Status do fluxo: ${safeText(nextStatus)}`,
@@ -426,7 +426,7 @@ function protocolSummary(row: Row) {
   return [
     `Protocolo: ${safeText(row.protocolo)}`,
     `Entidade: ${safeText(row.entidade)}`,
-    `Curso: ${safeText(row.curso)}`,
+    `Solução: ${safeText(row.curso)}`,
     `Status: ${safeText(row.status)}`,
     `Responsavel atual: ${safeText(row.responsavel_atual || row.etapa_atual)}`,
     `Solicitante: ${safeText(row.solicitante_nome)} <${safeText(row.solicitante_email)}>`
@@ -541,7 +541,7 @@ async function adjustCourseStock(db: ReturnType<typeof ensureSupabase>, courseId
   const currentStock = Number(course?.estoque_total ?? 0);
   const nextStock = currentStock + delta;
   if (nextStock < 0) {
-    throw new Error("Este curso nao possui vagas disponiveis no estoque.");
+    throw new Error("Esta solução nao possui vagas disponiveis no estoque.");
   }
   const { error: updateError } = await db.from("cursos").update({ estoque_total: nextStock }).eq("id", courseId);
   throwDb(updateError);
@@ -845,7 +845,7 @@ const supabaseApi = {
     if (insertError) throw new Error(`Erro ao salvar respostas do BPF: ${insertError.message}`);
     const { error } = await db.from("entidades").update({ status_qualificacao: "Concluída", pontuacao_q2: pontos }).eq("id", entidade_id);
     if (error) throw new Error(`Erro ao concluir a qualificação da entidade apos o BPF: ${error.message}`);
-    return { message: "BPF salvo. Entidade liberada para cursos.", pontuacao: pontos };
+    return { message: "BPF salvo. Entidade liberada para soluções.", pontuacao: pontos };
   },
 
   async courses() {
