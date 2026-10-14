@@ -25,6 +25,32 @@ flask --app api.index run --port 5000
 
 ## Deploy Vercel
 
+### Atualizacao de valores dos cursos
+
+Antes de publicar a versao com edicao de valores, execute no SQL Editor do
+Supabase a migracao `supabase/migrations/202610140001_course_unit_value.sql`.
+Ela apenas adiciona `cursos.valor_unitario`, sem alterar registros ou permissoes.
+Em um banco novo, `supabase_schema.sql` ja inclui a coluna. O SQLite local
+recebe a coluna automaticamente pela API Flask.
+
+Em Configuracoes > Cursos, o campo Valor unitario (R$) permite cadastrar ou
+alterar o preco, incluindo centavos e zero. Valores negativos e mais de duas
+casas decimais sao rejeitados. Um campo vazio volta ao valor legado do Sebrae,
+quando houver; nos demais cursos significa sem valor cadastrado. O preco salvo
+tem prioridade no dashboard e nas exportacoes, inclusive em fluxos existentes.
+Nao se trata de um historico de precos por solicitacao.
+
+A migracao nao foi executada em producao. O merge da PR nao substitui essa
+etapa nem a publicacao na Lovable.
+
+Verificacoes locais (sem acesso ao banco de producao):
+
+```bash
+node --test scripts/test-course-financials.mjs
+python -m unittest scripts.test_course_prices -v
+npm run build
+```
+
 Variaveis de ambiente recomendadas:
 
 ```text

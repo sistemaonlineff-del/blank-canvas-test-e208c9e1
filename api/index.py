@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import math
 import os
 import re
 import secrets
@@ -445,6 +446,7 @@ def init_db():
                 conn.execute(f"ALTER TABLE usuarios ADD COLUMN {column} {definition}")
         for table_name, columns in {
             "cursos": {
+                "valor_unitario": "REAL CHECK (valor_unitario >= 0)",
                 "campo_link": "TEXT",
                 "id_questionario": "TEXT",
                 "questionario": "TEXT",
@@ -886,7 +888,9 @@ def dashboard():
     init_db()
     entidades = fetch_all("SELECT * FROM entidades WHERE ativo=1")
     cursos = fetch_all("SELECT * FROM cursos WHERE ativo=1")
-    protocolos = fetch_all("SELECT * FROM protocolos")
+    protocolos = fetch_all(
+        "SELECT p.*, c.curso, c.valor_unitario FROM protocolos p LEFT JOIN cursos c ON c.id=p.curso_id"
+    )
     andamento = [p for p in protocolos if p.get("status") not in {"Finalizado", "Cancelado", "Reprovado"}]
     return jsonify(
         {
@@ -1330,6 +1334,20 @@ def get_table(table: str):
     return jsonify({"items": rows})
 
 
+def normalize_course_unit_value(value: Any) -> float | None:
+    if value is None or str(value).strip() == "":
+        return None
+    text = str(value).strip()
+    if "," in text and re.fullmatch(r"(?:[0-9]+|[0-9]{1,3}(?:\.[0-9]{3})+),[0-9]{1,2}", text):
+        text = text.replace(".", "").replace(",", ".")
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]{1,2})?", text):
+        raise ValueError("Informe um valor unitario valido, maior ou igual a zero, com ate duas casas decimais.")
+    amount = float(text)
+    if not math.isfinite(amount):
+        raise ValueError("Informe um valor unitario finito.")
+    return amount
+
+
 @app.post("/api/admin/table/<table>")
 def save_table(table: str):
     init_db()
@@ -1338,6 +1356,15 @@ def save_table(table: str):
     real_table = EDITABLE_TABLES[table]
     data = request.get_json(force=True)
     rows = data.get("rows", [])
+    if table == "cursos":
+        try:
+            rows = [
+                {**row, "valor_unitario": normalize_course_unit_value(row["valor_unitario"])}
+                if "valor_unitario" in row else row
+                for row in rows
+            ]
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
     existing_rows = fetch_all(f"SELECT * FROM {real_table}")
     existing_ids = {row["id"] for row in existing_rows if row.get("id")}
     incoming_ids = {row.get("id") for row in rows if row.get("id")}
@@ -1443,7 +1470,7 @@ def save_table(table: str):
         return jsonify({"message": "Tabela salva."})
 
     for row in rows:
-        row = {k: v for k, v in row.items() if k != "_deleted"}
+        row = {k: v for k, v in row.items() if k not in {"_deleted", "_tempKey"}}
         row_id = row.get("id")
         cols = [k for k in row.keys() if k != "id"]
         if row_id:

@@ -10,6 +10,7 @@ type CourseLike = {
   curso?: string | null;
   course?: string | null;
   area?: string | null;
+  valor_unitario?: number | string | null;
 };
 
 const RAW_COURSE_FINANCIALS: Record<number, CourseFinancialEntry> = {
@@ -184,7 +185,20 @@ const NAME_INDEX = Object.entries(RAW_COURSE_FINANCIALS).flatMap(([id, entry]) =
   }))
 );
 
-export function lookupCourseFinancial(course: CourseLike | string | null | undefined) {
+export function normalizeCourseUnitValue(value: unknown): number | null {
+  if (value == null || String(value).trim() === "") return null;
+  const text = String(value).trim();
+  const normalized = text.includes(",") && /^(?:\d+|\d{1,3}(?:\.\d{3})+),\d{1,2}$/.test(text)
+    ? text.replace(/\./g, "").replace(",", ".")
+    : text;
+  const amount = Number(normalized);
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized) || !Number.isFinite(amount) || amount < 0) {
+    throw new Error("Informe um valor unitário válido, maior ou igual a zero, com até duas casas decimais.");
+  }
+  return amount;
+}
+
+function lookupLegacyCourseFinancial(course: CourseLike | string | null | undefined) {
   const row =
     typeof course === "string"
       ? { curso: course }
@@ -202,6 +216,17 @@ export function lookupCourseFinancial(course: CourseLike | string | null | undef
 
   const partial = NAME_INDEX.find((item) => courseName.includes(item.key) || item.key.includes(courseName));
   return partial?.entry || null;
+}
+
+export function lookupCourseFinancial(course: CourseLike | string | null | undefined): CourseFinancialEntry | null {
+  const legacy = lookupLegacyCourseFinancial(course);
+  if (typeof course !== "object" || !course) return legacy;
+  try {
+    const unitValue = normalizeCourseUnitValue(course.valor_unitario);
+    return unitValue == null ? legacy : { ...legacy, unitValue, source: "Cadastro do curso" };
+  } catch {
+    return null;
+  }
 }
 
 export function formatCurrencyBRL(value: number) {
